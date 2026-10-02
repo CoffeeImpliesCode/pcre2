@@ -1,25 +1,78 @@
 .{
+    // The default name a dependent writes in `b.dependency("pcre2", .{})`, and
+    // the prefix of the module it then reaches through `dep.module("pcre2")`.
     .name = .pcre2,
+    // Upstream's release. build.zig refuses to configure when this drifts away
+    // from the pinned commit it carries there.
     .version = "10.49.0",
-
-    // Do NOT change this for new releases.
-    // DO change this if making a fork of PCRE2 which is used by any Zig clients.
-    .fingerprint = 0x914b3d63ebab9e21,
-
+    // Upstream ships this value in its own manifest and says, in the comment
+    // above it, "Do NOT change this for new releases. DO change this if making
+    // a fork of PCRE2 which is used by any Zig clients." This repository is
+    // such a fork, so it carries the value the Zig 0.16.0 compiler reported for
+    // `.name = .pcre2` with this `.version` rather than upstream's.
+    .fingerprint = 0x914b3d639d1db54d, // Changing this has security and trust implications.
     .minimum_zig_version = "0.16.0",
-    .dependencies = .{
-        .sljit = .{
-            .url = "git+https://github.com/zherczeg/sljit.git#de0259c7aaf36aa40cba8014f3fad3edde9307f9",
-            .hash = "N-V-__8AAN1hRgCbYkMHlPE4yQE6rN_yDbzE1yr8W1J6x-Gw",
-            .lazy = true,
-        },
-    },
+    // No `.dependencies`, and that is a change from upstream rather than an
+    // omission. Upstream declares a lazy `sljit` package dependency because
+    // `pcre2_jit_compile.c` compiles against it; its source is a git submodule
+    // under `deps/` or a package Zig fetches from the network, and a fork whose
+    // primary core compiles from its own tree with no build-time download can
+    // use neither. The dependency and the `-Dsupport_jit` option that reached it
+    // are both gone, and JIT is off, so `SUPPORT_JIT` is 0 in the generated
+    // config.h.
+    //
+    // The consumer package in `consumer/` has its own manifest and depends on
+    // this one by relative path, so it is deliberately not listed here: that
+    // would close a manifest cycle.
+    .dependencies = .{},
     .paths = .{
-        "build.zig",   "build.zig.zon",
-        "src/",        "doc/",
-        "deps/",       "HACKING",
-        "INSTALL",     "README.md",
-        "LICENCE.md",  "AUTHORS.md",
+        "build.zig",
+        "build.zig.zon",
+        // The harness settings for the published 53-platform `cross-test`
+        // matrix. Fork-authored configuration, not documentation and not a
+        // build input: nothing in this package's `build.zig` reads it. It
+        // ships so a fetched copy is the whole package, and it is listed here
+        // because upstream's broad `.gitignore` patterns do not exclude it.
+        "cross-test.profile.sh",
+        // The aggregate header handed to addTranslateC. Fork-authored and at the
+        // package root, so the upstream C tree under src/ stays byte-for-byte
+        // upstream's. It names the same pcre2.h the C core is compiled with.
+        "translate.h",
+        // The Zig facade.
+        "zig",
+        // Its behavioural tests and its deterministic smoke program.
+        "tests.zig",
+        "smoke.zig",
+        // Upstream's test data, which is also where this fork's independent
+        // fixtures module lives. build.zig names
+        // testdata/foundation-fixtures.zig by path, so a package built without
+        // this directory could not configure.
+        "testdata",
+        // The separate consumer package. It is inside this repository so the
+        // dependency it proves is a relative path that resolves without a
+        // registry entry or a network fetch.
+        "consumer",
+        // Upstream's C sources: the whole compile list, the generic public
+        // header, the CMake config template and the character-table source the
+        // build copies. Upstream's own manifest ships `src/` whole and so does
+        // this one.
+        "src",
+        "doc",
+        // Upstream licence, authorship and security records.
+        "LICENCE.md",
+        "COPYING",
+        "AUTHORS.md",
         "SECURITY.md",
+        // Upstream documentation this fork does not rewrite but whose build
+        // instructions it replaces, so a reader has them alongside.
+        "HACKING",
+        "INSTALL",
+        "README.md",
+        "UPSTREAM.md",
+        "UPSTREAM.sha256",
+        "README.zig.md",
+        "NOTICE.md",
+        "CHANGELOG.md",
+        "FORK-NOTES.md",
     },
 }

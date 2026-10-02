@@ -1,0 +1,132 @@
+# SHA-256 of every upstream byte this package compiles, installs, reads as
+# an oracle, or publishes terms for, from PCRE2 10.49 (tag pcre2-10.49, commit
+# 6f9d7c1373262c541324a16a358785b33ef116cf, https://github.com/PCRE2Project/pcre2.git),
+# plus this fork's own fixture module.
+#
+# 59 records, in this exact path set:
+#
+#   30  src/*.c        the explicit core_sources list in build.zig:90-121
+#    1  src/pcre2_chartables.c.dist
+#                      the generated character tables; upstream ships them under a
+#                      .dist name and build.zig:486-494 copies it to
+#                      pcre2_chartables.c and compiles that
+#    2  src/pcre2posix.c, src/pcre2test.c
+#                      the two further artifacts this graph builds
+#    2  src/pcre2.h.generic, src/config-cmake.h.in
+#                      the public header copied to pcre2.h and installed, and the
+#                      config.h template
+#   12  the internal headers the core includes: pcre2_internal.h, pcre2_compile.h,
+#       pcre2_intmodedep.h, pcre2_ucp.h, pcre2_util.h, pcre2_jit_char_inc.h,
+#       pcre2_jit_match_inc.h, pcre2_jit_misc_inc.h, pcre2_jit_simd_inc.h,
+#       pcre2_printint_inc.h, pcre2_ucptables_inc.h, pcre2posix.h
+#    3  LICENCE.md, COPYING, AUTHORS.md
+#    8  testdata/testinput2, testoutput2, testinput5, testoutput5, testinput6,
+#       testoutput6, testinput15, testoutput15
+#                      the upstream pcre2test input and expected-output pairs that
+#                      testdata/foundation-fixtures.zig cites by file and line
+#    1  testdata/foundation-fixtures.zig
+#                      NOT upstream's: this fork's own fixture module. It holds
+#                      every expected answer the tests compare against, so a
+#                      silent edit to it would move the oracle rather than break a
+#                      build, and hashing it makes such an edit fail loudly.
+#
+# Deliberately absent, each for a stated reason:
+#   .gitignore        upstream's list is kept verbatim and this fork appends to it
+#                     (.gitignore:130-157), so the file is not byte-identical to
+#                     upstream's. The append is recorded in NOTICE.md.
+#   build.zig, build.zig.zon, translate.h, zig/, tests.zig, smoke.zig, consumer/,
+#   cross-test.profile.sh, .github/workflows/verify.yml, UPSTREAM.md, NOTICE.md, CHANGELOG.md,
+#   FORK-NOTES.md, README.zig.md
+#                     this fork's own files, listed in NOTICE.md.
+#   UPSTREAM.sha256    a record cannot contain its own digest.
+#   the rest of testdata/
+#                     upstream ships it whole and .paths ships it whole, but only
+#                     the eight files above are cited line by line by the fixture
+#                     module. The rest travel for provenance and for upstream's
+#                     own RunTest; nothing in this package reads them.
+#   the rest of src/   config.h.generic, config.h.in, pcre2.h.in, libpcre2-*.sym.in,
+#                     the two EBCDIC character-table variants, pcre2demo.c,
+#                     pcre2grep.c, pcre2posix_test.c, pcre2test_inc.h,
+#                     pcre2_fuzzsupport.c, pcre2_jit_test.c -- none is compiled by
+#                     this graph, read by the facade, or used as a test oracle.
+#
+# Method: each file was read as a raw byte read (Bun file.arrayBuffer) and hashed
+# with SHA-256 from node:crypto, in an eval cell, on 2026-10-01. No shell hashing
+# command and no git command was used. No receipt in this package's set reports
+# the hashing tool's version, so this states the method and claims no version of
+# it. Every one of the 59 records was then re-derived from the written file with
+# the same method and compared against it.
+#
+# What this record establishes: if it validates, the bytes a build compiles, the
+# header it translates, the licence a redistributor must reproduce and the oracle
+# bytes the tests compare against are the bytes pinned here, and any later edit to
+# one of them fails the check loudly.
+#
+# What it does not establish: it is not a signature, not a Git object id, and not
+# a re-derivation from commit 6f9d7c1373262c541324a16a358785b33ef116cf. It is a
+# hash of this working tree. That the tree equals that commit rests on the import
+# and on the `git archive` digest in UPSTREAM.md, both recorded by the driver.
+#
+# Verify with:  sha256sum -c UPSTREAM.sha256
+# Current source/fetched replay status is driver-owned, outside these package bytes:
+# FORKS.json.cross_test_wave.materialized_packages.pcre2 and
+# local://foundation-cross-test-package-regression.json.
+412ace3355a4d6a4d835c350a7df172903811eafda7b13500dacf58429ee757e  AUTHORS.md
+99272c55f3dcfa07a8a7e15a5c1a33096e4727de74241d65fa049fccfdd59507  COPYING
+197d8a73ffee0d6b09adba2f9c677b5f5aede24edf89258a68e48248d010d811  LICENCE.md
+f5d340ea18b2f77803fa81ea9534b646c866b1ba5a5c5d021d4e1ed8108122b1  src/config-cmake.h.in
+19756397bb6c402d43f74ba827c55acd26c21d078eead9ed5d49f582e4c506d8  src/pcre2.h.generic
+53855156e91473a9fd905bff2c54bbe395ad479cf6a8d313a4502f85e121bcf4  src/pcre2_auto_possess.c
+a0ceb94d96a2b438524d0cb85168e1ab5323c871865ddf9d524d45eb1ed131d1  src/pcre2_chartables.c.dist
+ffc49737b8303e240671ae15662cfe3f33db649bfe303607fc7d12a0f85abac8  src/pcre2_chkdint.c
+01f7e90e6ccea23097911b35e33a1b6ea567887216d2695a24fcd27fbcf35223  src/pcre2_compile.c
+a8a64450a3efea195b3cb26a91b5088bcb42f48dd751cac78688d4dda2b45c99  src/pcre2_compile.h
+48999c337a5ae7f36ceb4c5d8efb39b1b6784d265d3468ab8878f2b72a7ced6e  src/pcre2_compile_cgroup.c
+601d14f8238a54d20528cfaf16489eaf6e9c4ae45e27c582796fb56280cd3519  src/pcre2_compile_class.c
+19709c2d378830a5444b046aa4bab11f8192e8958b773814fe17b409a5d1bba8  src/pcre2_config.c
+fb47ff3678401ea5d6247c24a2ccca2311bb35fddf66cf7ffa0db48de4654978  src/pcre2_context.c
+fdd5058c666eec60fe6320bd31520137db330c743ad46de7e05464ba8614516e  src/pcre2_convert.c
+abbe0ba7c973ede93733cafdc1168b5ac12d925370d2f3f032e8acbbe769d148  src/pcre2_dfa_match.c
+b564ff9a785fa5d9d0592945dea35a668e34760f61d818daf03dea86d22bf18c  src/pcre2_error.c
+8d1b4bd7015980101b44104ab0250f634d82be90bca0d53701731fcf9c1a70ce  src/pcre2_extuni.c
+9fde442db9bea0a7b406ff29e65c274ae0286536f14075a62502aef69f3cf0d8  src/pcre2_find_bracket.c
+558dca4b23799024a69c25ed0a8c6f6823315c2352a07895d4bdf92d753dbc58  src/pcre2_internal.h
+e64e88bb04168c9b2f10ed32320a7290e050e2253f09ee9f60757c8bf375f8a3  src/pcre2_intmodedep.h
+722a2a686383a896d1c2a6808350fcd2993f1acb1af8805ed2f0e02c736fd5c9  src/pcre2_jit_char_inc.h
+32b4f057cc8ac9a15c9c837121112329e866c1bc1d98acce148ceeff4525c587  src/pcre2_jit_compile.c
+fb541db739d8d63e03ec248c378bc3e352a3e191fbac2fc2336ee859850ab11b  src/pcre2_jit_match_inc.h
+c25c59789cd304fa44ca536d9719b7d4db92bec285476adbcede9d7f4a08f3db  src/pcre2_jit_misc_inc.h
+cb413ff3ac7c8d85435662e6a475e28009b30b3e4c071a7dca1d8f1ba98ce978  src/pcre2_jit_simd_inc.h
+126bf7b41c44d61f19cb40ac25d6d50110bab9de50708bb22df645d2920f8e62  src/pcre2_maketables.c
+aa91540f2c8e6dd203d956b0b8b5e2aea1a206be78d110a037b7105ef3fc62a9  src/pcre2_match.c
+c9b6b970ed1e8a6d52635f6476274ff28682c55614b100799e482ecbcb1f1857  src/pcre2_match_data.c
+226ef5bcd136110ec71426981df42c2f4f0710ea46e6061d2ba05d03cf6a0bc8  src/pcre2_match_next.c
+bbfc7e6f1d95a2986948b7d0be5c2355d1560198d403f48fa72e0c82c7c9c920  src/pcre2_newline.c
+6582725ebab88842fffffd348f59f7d6d58d66fe4b68384ecccad526a5203d89  src/pcre2_ord2utf.c
+d63e56279b9e3b9309329cc738003fac3f89c49676d26db7fc647123ce06e50d  src/pcre2_pattern_info.c
+61bcb4d8f40d9238b4ef6460df5910f81a0cc8dfa595d58e747707ba2eb340c3  src/pcre2_printint_inc.h
+caf29e2cdc67035be5c131f2434ebe2072e08c8e6f15ca0f3e28e9795d4512f6  src/pcre2_script_run.c
+873afc4748a508c520055a94743df902ef3412625a06fe569d4409d6f1f4b330  src/pcre2_serialize.c
+5ade214c7170383b97874ead541bafe1c962e9b7f61ac10e8d87e404be76968f  src/pcre2_string_utils.c
+3bfcfcce37f729252df9e23b5419a93d8542b6dfc5f47ac990d72e74ca9a2e3f  src/pcre2_study.c
+23998ee7e5f5c2fd1c6b2b4c2ee9b48356076f7d06a678b00d5efe7c98383732  src/pcre2_substitute.c
+76ef81b82e3d48572da556ee063dd7602d916aa62ea8be4d1d42229936669bf4  src/pcre2_substring.c
+ab96e9e615b5b43bfd601b0d3d3be67a317c362706167c024f365e8af489e65d  src/pcre2_tables.c
+cfa8bcb3ad316e09ebfdf3e4b07d708a9d4e53795cc7c0bf04ce5156d7695adc  src/pcre2_ucd.c
+7029256f6212e729458759a925a624fe5d94a2be1f6425b4ae3816795bbf1f02  src/pcre2_ucp.h
+5690fa727d95555afed799bdd5800f9f7b4302fd464e98d850fb9c9b4c28939f  src/pcre2_ucptables_inc.h
+ae763c7cc12f8b770aeb632de7ed0e8ec77163baf9316f6493be599121ec58c9  src/pcre2_util.h
+fc7271e737bc7828b27bf52ade1feb0e1d29e40a9ef737d102ddb0a8091ccc3f  src/pcre2_valid_utf.c
+1e8cfe268ec0a322bd6c2dc1e66fdbf515d742760b17584c43eaa7efdcb490b6  src/pcre2_xclass.c
+046af521ccabe9a397bdbc910bd5c3538ccabc28df9b3e5fe2a30b0c55d0966b  src/pcre2posix.c
+4e3f99d21b10f3168fa562c6345e2b387a1a83f8bd2a35784b2832f4dc4d9444  src/pcre2posix.h
+a5951566f8ac1041f64e8cbb8b3765b7d2f758e1e1c16a4de6f18054bab97b3c  src/pcre2test.c
+68995985be444faa951afc853631b9da2049d03ad7ed5ecfa9b7236127151bcd  testdata/foundation-fixtures.zig
+5404ce5e1858d4a18272021f04da937577b013aa22920a31d9b16807ee691053  testdata/testinput15
+8d69db92c9b0d45666639fcb8553ca28bb4d0b5b98110c358d724b1f9ad35bde  testdata/testinput2
+88a073f94d5d90625e799252311338a402386e3ff42e2b698d4d53a00b71bd6c  testdata/testinput5
+cd8f7a8aab40542b067eda065c6902f52d98642f5d4cf9f7bb8ebe81fd77c93c  testdata/testinput6
+475a0cf2fa934806055bb0efaa2828a31249a62d440ecdd419f0c8ed3de45860  testdata/testoutput15
+87d785d247cdd4dd63d6825113137f9de3c991142b7127e24fd5d5e6c69cd85c  testdata/testoutput2
+e6710eb4f4afba3451696cbc5edd3ba7275f8abe0c467906e76700cca263a169  testdata/testoutput5
+bed9d28a83f56f4514e5dae0b99f6d39169b4914f9ceee4a745f9c1f19227327  testdata/testoutput6

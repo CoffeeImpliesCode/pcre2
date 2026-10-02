@@ -1,0 +1,364 @@
+# Verification for this fork.
+#
+# Upstream's own workflows (build.yml, dev.yml, codeql.yml, clang-analyzer.yml,
+# pages.yml, scorecards.yml, sync.yml, cifuzz.yml) are kept untouched and still
+# describe how upstream tests PCRE2 with autotools and CMake. This file is
+# separate from them on purpose: it names this repository's gates, and it is
+# written for this repository rather than retargeted from another maintainer's
+# infrastructure.
+#
+# Four jobs, four different questions:
+#
+#   native     does the full in-tree core build, do the *installed* pcre2.h
+#              and pcre2posix.h compile, link and run against the *installed*
+#              core library and *installed* POSIX wrapper, do the behavioural
+#              tests pass in Debug and ReleaseSafe, and does the smoke program
+#              produce its output on this host
+#   cross      does the core, the facade, the tests and the smoke compile and
+#              link for each of the six supported targets, without running them
+#   system     does -fsys=pcre2-8 bind the facade to an installed PCRE2 that is
+#              a different release from the one in this tree, which is the only
+#              way to tell the two apart
+#   consumer   does the published module resolve from a package that did not
+#              write it
+#
+# Nothing here needs the network once checkout and the toolchain are in place.
+# build.zig.zon has no `.dependencies`, so there is nothing for Zig to fetch,
+# no job installs a package manager, and no job downloads a tarball. The one
+# exception is the `system` job, whose whole purpose is a library that is
+# installed on the machine; it is named separately so that "the default build
+# needs no network" stays a statement about the default build.
+
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: native build, tests and smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: immutable native source and fixture integrity
+        run: sha256sum -c UPSTREAM.sha256
+
+      - name: build
+        run: zig build --summary all
+
+      # The real gate for the installed C surface.
+      #
+      # This translation unit includes the *installed* headers, so it sees the
+      # header a dependent gets rather than anything this build graph put on its
+      # own include path, and it links the *installed* libraries by name through
+      # -l, so a declaration whose signature disagrees with the compiled
+      # definition fails to link. It runs, and the offsets it checks are worked
+      # out by hand below.
+      #
+      # Two -l names, because the POSIX wrapper is a second installed artifact
+      # and not a synonym for the core: `zig build` installs libpcre2-8 and
+      # libpcre2-posix side by side, `src/pcre2posix.c` is what defines
+      # pcre2_regcomp, pcre2_regexec and pcre2_regfree, and
+      # `src/pcre2posix.h:165-168` defines the POSIX spellings as macros for
+      # those three. So the only names a caller may use through that header are
+      # the four the header declares, and a call to anything else is a mistake
+      # in the program rather than a fact about this fork; -Werror makes the
+      # compile refuse it there, where the diagnostic names the call, instead
+      # of letting an undeclared name through to a link error about a symbol
+      # that was never going to be there. A glibc target builds these two
+      # libraries dynamically by default, and both are named on the link line
+      # in that order, so the run below binds the installed objects found
+      # through LD_LIBRARY_PATH rather than whatever the runner image ships.
+      #
+      # `PCRE2_CODE_UNIT_WIDTH=8` is the one macro the application has to supply:
+      # `pcre2.h.generic:1057-1059` hard-errors without it. It is the same value
+      # this fork builds with, and the guard in `src/pcre2.h.generic` means the
+      # rest of the header is self-sufficient for an application: no config.h
+      # is needed to use the installed library.
+      - name: installed headers compile, link and run against the installed libraries
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/c_surface_gate.c" <<'C'
+          #include <pcre2.h>
+          #include <pcre2posix.h>
+          #include <stdio.h>
+          #include <string.h>
+
+          /* Not volatile: nothing here is deleted by an optimizer, because the
+             program's only output is its exit status and the compile and the
+             link are themselves part of the gate. */
+
+          /* Worked out by hand, not observed from a run.
+             Pattern  (?<letters>a+)(?<digits>\d+)\z  against  "aaa123".
+             "aaa" is the longest run of a's that leaves the rest to \d+, so
+             group 1 spans [0,3); the \d+ that follows spans [3,6); \z pins the
+             end, so the whole match is [0,6). A correct implementation returns
+             3: the match itself plus the two capturing groups. */
+          static int pcre2_gate(void) {
+              int errcode = 0;
+              PCRE2_SIZE erroffset = 0;
+              pcre2_code *re = pcre2_compile(
+                  (PCRE2_SPTR)"(?<letters>a+)(?<digits>\\d+)\\z",
+                  PCRE2_ZERO_TERMINATED, 0, &errcode, &erroffset, NULL);
+              if (re == NULL) return 10;
+
+              pcre2_match_data *md = pcre2_match_data_create_from_pattern(re, NULL);
+              if (md == NULL) { pcre2_code_free(re); return 11; }
+
+              static const PCRE2_UCHAR subject[] = "aaa123";
+              const int rc = pcre2_match(re, subject, sizeof subject - 1, 0, 0, md, NULL);
+              if (rc != 3) { pcre2_match_data_free(md); pcre2_code_free(re); return 12; }
+
+              /* The six numbers read below are three offset pairs: the whole
+                 match and the two groups. The count is the capacity those reads
+                 rest on rather than the number of groups this pattern happens
+                 to have, so it is checked as the lower bound they need: a
+                 library that reported fewer pairs would make the loop read
+                 past the end of the allocation. */
+              if (pcre2_get_ovector_count(md) < 3) {
+                  pcre2_match_data_free(md); pcre2_code_free(re); return 13;
+              }
+
+              const PCRE2_SIZE *ov = pcre2_get_ovector_pointer(md);
+              const PCRE2_SIZE want[6] = { 0, 6, 0, 3, 3, 6 };
+              for (int i = 0; i < 6; i++) {
+                  if (ov[i] != want[i]) { pcre2_match_data_free(md); pcre2_code_free(re); return 14; }
+              }
+
+              /* The name "digits" was defined on the second capturing group, so
+                 the compiled pattern has to report it as group 2. This reads the
+                 pattern's own name table rather than the match, so it fails for
+                 a library that mis-parsed the pattern even if the offsets were
+                 somehow right. */
+              if (pcre2_substring_number_from_name(re, (PCRE2_SPTR)"digits") != 2) {
+                  pcre2_match_data_free(md); pcre2_code_free(re); return 15;
+              }
+
+              /* Group 2 is "123", so the copy is three characters and needs a
+                 fourth byte for the NUL it is terminated with. glen arrives as
+                 the size of the buffer the caller owns and leaves as the number
+                 of characters copied, NUL excluded, so a capacity under four is
+                 PCRE2_ERROR_NOMEMORY with nothing copied at all: the capacity in
+                 hand is sizeof group, and the NUL is checked where it landed. */
+              PCRE2_UCHAR group[8];
+              PCRE2_SIZE glen = sizeof group;
+              if (pcre2_substring_copy_bynumber(md, 2, group, &glen) != 0 ||
+                  glen != 3 || memcmp(group, "123", 3) != 0 || group[3] != 0) {
+                  pcre2_match_data_free(md); pcre2_code_free(re); return 16;
+              }
+
+              /* The same capture under the other ownership rule: this call
+                 allocates, so the string is the caller's until it goes back to
+                 the library, and neither the NUL terminator nor the release can
+                 be observed through the copy above. */
+              PCRE2_UCHAR *owned = NULL;
+              if (pcre2_substring_get_bynumber(md, 2, &owned, &glen) != 0 ||
+                  glen != 3 || strcmp((const char *)owned, "123") != 0) {
+                  pcre2_substring_free(owned);
+                  pcre2_match_data_free(md); pcre2_code_free(re); return 17;
+              }
+              pcre2_substring_free(owned);
+
+              pcre2_match_data_free(md);
+              pcre2_code_free(re);
+              return 0;
+          }
+
+          /* \p{Greek} is answered from the UCD tables that were compiled into
+             the library, and a build without them rejects the escape at
+             compile time rather than matching nothing, so this asks a question
+             about characters instead of asking the library what it was
+             configured with. PCRE2_UTF makes each character in the subject one
+             code unit, and PCRE2_UCP is the Unicode property mode \p needs. */
+          static int unicode_gate(void) {
+              int errcode = 0;
+              PCRE2_SIZE erroffset = 0;
+              pcre2_code *re = pcre2_compile(
+                  (PCRE2_SPTR)"\\p{Greek}+", PCRE2_ZERO_TERMINATED, PCRE2_UTF | PCRE2_UCP,
+                  &errcode, &erroffset, NULL);
+              if (re == NULL) return 20;
+
+              /* One offset pair, the whole match. Nothing wider is read. */
+              pcre2_match_data *md = pcre2_match_data_create(1, NULL);
+              if (md == NULL) { pcre2_code_free(re); return 21; }
+
+              /* U+03B1 alpha and U+03B2 beta are 0xCE 0xB1 and 0xCE 0xB2 in
+                 UTF-8: two characters in four bytes, and the one-or-more takes
+                 both, so the whole match is [0,4). A library that counted bytes,
+                 or matched one character where the pattern says one or more,
+                 reports something else here. */
+              static const PCRE2_UCHAR greek[] = "\xce\xb1\xce\xb2";
+              if (pcre2_match(re, greek, sizeof greek - 1, 0, 0, md, NULL) != 1) {
+                  pcre2_match_data_free(md); pcre2_code_free(re); return 22;
+              }
+              const PCRE2_SIZE *ov = pcre2_get_ovector_pointer(md);
+              if (ov[0] != 0 || ov[1] != 4) {
+                  pcre2_match_data_free(md); pcre2_code_free(re); return 23;
+              }
+
+              /* U+4E2D is a Han character: one character in three bytes, and in
+                 no Greek script. Whatever is finer than "not ASCII" has to
+                 refuse it, so this is the negative a match-only version of this
+                 gate would not have had. */
+              static const PCRE2_UCHAR han[] = "\xe4\xb8\xad";
+              if (pcre2_match(re, han, sizeof han - 1, 0, 0, md, NULL) != PCRE2_ERROR_NOMATCH) {
+                  pcre2_match_data_free(md); pcre2_code_free(re); return 24;
+              }
+
+              pcre2_match_data_free(md);
+              pcre2_code_free(re);
+              return 0;
+          }
+
+          /* The POSIX wrapper is a second installed artifact with its own
+             installed header: `src/pcre2posix.h:159-168` declares
+             pcre2_regcomp, pcre2_regexec and pcre2_regfree and defines the
+             POSIX spellings as macros for them, so regcomp, regexec and regfree
+             below are the only names that header licenses, and they resolve in
+             libpcre2-posix. `^a+$` against "aaa" is three a's and nothing else,
+             so the wrapper reports the whole match as the byte range [0,3), and
+             against "aaab" it has to refuse. */
+          static int posix_gate(void) {
+              regex_t re;
+              if (regcomp(&re, "^a+$", REG_EXTENDED) != 0) return 30;
+
+              regmatch_t pmatch[1];
+              if (regexec(&re, "aaa", 1, pmatch, 0) != 0) { regfree(&re); return 31; }
+              if (pmatch[0].rm_so != 0 || pmatch[0].rm_eo != 3) { regfree(&re); return 32; }
+
+              /* "aaab" is not a run of a's with nothing after it, and
+                 REG_NOMATCH is the wrapper's own value rather than the 0 a
+                 successful regexec returns, so a wrapper that reported every
+                 subject as a match cannot answer 0 here. */
+              if (regexec(&re, "aaab", 1, pmatch, 0) != REG_NOMATCH) { regfree(&re); return 33; }
+
+              regfree(&re);
+              return 0;
+          }
+
+          int main(void) {
+              const int a = pcre2_gate();
+              const int b = unicode_gate();
+              const int c = posix_gate();
+              printf("pcre2 C gate: match=%d unicode=%d posix=%d\n", a, b, c);
+              return a || b || c;
+          }
+          C
+          zig cc -std=c11 -Wall -Wextra -Werror \
+            -DPCRE2_CODE_UNIT_WIDTH=8 \
+            -I zig-out/include \
+            "$RUNNER_TEMP/c_surface_gate.c" \
+            -L zig-out/lib -lpcre2-posix -lpcre2-8 \
+            -o "$RUNNER_TEMP/c_surface_gate"
+          LD_LIBRARY_PATH=zig-out/lib "$RUNNER_TEMP/c_surface_gate"
+
+      # Debug and ReleaseSafe are the two modes the gates above are run in: the
+      # first catches a C object that is only instrumented in one of them and the
+      # second is where an optimization can hide a bounds mistake.
+      - name: test (Debug)
+        run: zig build test --summary all
+
+      - name: test (ReleaseSafe)
+        run: zig build test -Doptimize=ReleaseSafe --summary all
+
+      - name: smoke
+        run: zig build smoke --summary all
+
+  cross:
+    name: check ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-linux-gnu
+          - aarch64-linux-gnu
+          - aarch64-macos-none
+          - x86_64-windows-gnu
+          - riscv64-linux-gnu
+          - wasm32-wasi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      # `check` compiles the C core, the facade, `tests.zig` and `smoke.zig` for
+      # the given target and runs nothing. An explicit -Dtarget narrows the
+      # matrix to exactly that target, which is why this is one job per target
+      # rather than one job building all six: a matrix row that silently
+      # checked nothing would still be green.
+      - name: Compile the C core, the facade, the tests and the smoke
+        run: zig build check -Dtarget=${{ matrix.target }} --summary all
+
+  system:
+    name: system library (-fsys=pcre2-8)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      # The point of this job is that the installed library is not this tree's
+      # library. The runner ships whatever its image pinned, and this fork pins
+      # 10.49, so a translation built here against the installed <pcre2.h> and
+      # linked against the installed libpcre2-8 is a real cross-implementation
+      # check rather than a restatement of the bundled build.
+      - name: Install the PCRE2 8-bit development package
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpcre2-dev
+          # Report what was installed rather than asserting a version: the point
+          # is that it is not the tree's, not which release the image pinned.
+          pkg-config --modversion libpcre2-8
+
+      # What this step binds, and what it does not. The fixture table in
+      # `testdata/foundation-fixtures.zig` is upstream's own `pcre2test` input and
+      # expected output for release 10.49, the release this tree is a fork of, so
+      # three of its cases pin a compile rejection that 10.49 produces: error
+      # 122 at offset 1, error 106 at offset 4 and error 142 at offset 6, each
+      # with its exact message text. Two more pin hand-derived
+      # `src/pcre2_valid_utf.c` paths. An installed PCRE2 of another release can
+      # answer one of those differently, and that is a real difference between
+      # two releases rather than a fault in this binding. Read a red step here
+      # against the version the step above printed, and never by loosening a
+      # fixture.
+      - name: test against the installed library
+        run: zig build test -fsys=pcre2-8 --summary all
+
+      # Release-independent by construction: `smoke.zig` compares byte offsets
+      # worked out by hand from the subject strings it prints, so an installed
+      # release can move them only by changing what a match means. This is the
+      # cross-implementation signal that does not depend on which release the
+      # image happened to pin.
+      - name: smoke against the installed library
+        run: zig build smoke -fsys=pcre2-8 --summary all
+
+  consumer:
+    name: consumer package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      # The failure this catches is the one the library's own tests cannot see:
+      # a module that builds from the inside and does not resolve from outside.
+      # `dep.module("pcre2")` carries the compiled core with it, so this also
+      # proves that a dependent needs no path into this repository's tree.
+      - name: run
+        working-directory: consumer
+        run: zig build run --summary all

@@ -127,4 +127,32 @@ zig-cache/
 .devcontainer/
 .personal/
 
+# --- this fork ------------------------------------------------------------
+#
+# The Zig build graph here writes nothing into the source tree. The generated
+# pcre2.h, the copied pcre2_chartables.c and the generated config.h are build
+# outputs of `b.addWriteFiles` and `b.addConfigHeader`, so they land under the
+# build cache directory; the artifacts land in the install prefix. The four Zig
+# rules above carry no leading slash, so they match at any depth and already
+# cover the nested consumer package in consumer/ and its own cache and prefix.
+#
+# Nothing this fork adds to the tree is excluded by any rule above, and none of
+# the rules above is removed or narrowed here: they belong to upstream's
+# autotools, CMake and Bazel builds, which are still how a source checkout of
+# this repository is configured, and this fork replaces none of them.
+#
+# The negations below name the fork's own sources for that reason only. They are
+# a no-op today; they exist because this file is upstream's, is shared with every
+# other PCRE2 checkout, and the normal way a file goes missing from a package is
+# an upstream rule broadening to cover it. A negation cannot re-include a file
+# whose parent directory is excluded, so each directory is named as well as its
+# contents.
+!translate.h
+!cross-test.profile.sh
+!/zig/
+!/tests.zig
+!/smoke.zig
+!/consumer/
+!/testdata/
+
 # End
