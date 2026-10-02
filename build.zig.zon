@@ -24,7 +24,12 @@
     // The consumer package in `consumer/` has its own manifest and depends on
     // this one by relative path, so it is deliberately not listed here: that
     // would close a manifest cycle.
-    .dependencies = .{},
+    .dependencies = .{
+        .sljit = .{
+            .url = "git+https://github.com/zherczeg/sljit.git#de0259c7aaf36aa40cba8014f3fad3edde9307f9",
+            .hash = "N-V-__8AAN1hRgCbYkMHlPE4yQE6rN_yDbzE1yr8W1J6x-Gw",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",
