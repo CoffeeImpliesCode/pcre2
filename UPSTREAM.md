@@ -57,7 +57,7 @@ Where each of those comes from, read out of the carried tree:
 * Upstream's own description of what this library is: "a set of C functions
   that implement regular expression pattern matching… self-contained and
   portable", BSD-licensed and "permitted in proprietary software"
-  (`README.md:8-14`).
+  (`README.upstream.md:8-14`).
 
 **Tag signature: not verified here.** No signing key was consulted while this
 file was written and no git command was run at all, so nothing here is an
@@ -99,6 +99,11 @@ comments plus seven re-inclusion lines, including `!cross-test.profile.sh`. Beca
 byte-identical to upstream's, it is deliberately absent from `UPSTREAM.sha256`
 and the append is recorded in [`NOTICE.md`](NOTICE.md) and `FORK-NOTES.md` §12
 instead. Everything else this fork adds is a new file in a new region.
+
+**One upstream file moved, without changing: `README.md` → `README.upstream.md`.**
+A move is not an edit, and the move is recorded here rather than only in
+`NOTICE.md` because this file's "one upstream file is edited" sentence would
+otherwise read as if nothing else had happened to an upstream path.
 
 ## What this fork is
 
@@ -234,15 +239,33 @@ fail later (`build.zig:32-42`, `build.zig.zon:16-27`). The consequence is the
 ### Linkage
 
 `-Dlinkage` is accepted by the main graph. Its default is derived from the
-target, not from the host: **dynamic on a GNU-libc target, static on every
-other** (`build.zig:223`). The same value drives the `PCRE2_STATIC` declaration
-macro on the C compile line (`build.zig:475-484`) and on whichever line reads
-the header for the target (`build.zig:540-558`, `:557-572`, `:846`), so the
-declaration decoration and the archive that was produced are one fact.
+target being built, not from the host: **dynamic on a GNU-libc target, static on
+every other** (`defaultLinkage`). Each `zig build check` cell resolves that
+default from its own target, so `wasm32-wasi` compiles a static archive rather
+than a shared object a target with no dynamic loader cannot carry; a value named
+on the command line reaches every cell unchanged, and a cell that cannot carry
+what was asked for is refused by name rather than given the other linkage
+(`linkageSupported`, `unsupportedSharedMessage`). The same value drives the
+`PCRE2_STATIC` declaration macro on the C compile line (`addCoreLine`) and on
+whichever line reads the header for the target — the translation line, and on the
+preprocessed route the `zig cc -E` line as well — so the declaration decoration
+and the archive that was produced are one fact.
 `src/pcre2.h.generic:56-63` reads `PCRE2_STATIC` only under `defined(_WIN32)`,
 so on an ELF target and on macOS the macro is never read and saying which
 linkage was chosen there is a statement about this build graph, not about the
 header.
+
+One compile line carries a decoration of its own, and it is upstream's own
+override rather than a macro invented here: `src/pcre2posix.c`, compiled **into**
+the core artifact as well as into `pcre2-posix`, is compiled with
+`PCRE2_EXP_DECL=extern` on COFF. That translation unit includes `pcre2.h` but not
+`pcre2_internal.h`, so the header's `dllimport` default applied to calls into
+the DLL the caller is itself part of. `src/pcre2.h.generic:51-52` is upstream's
+statement that an already-defined `PCRE2_EXP_DECL` is left alone, and
+`src/pcre2_internal.h:154-160` is that same override as the core's own sources
+use it. Upstream's separate `pcre2-posix` library keeps the header's
+`dllimport`, which is right there, because its calls really do cross into the
+core DLL (`CMakeLists.txt:1011-1013`).
 
 ### System-library mode
 
@@ -287,6 +310,34 @@ what is and is not known about its cause are in
 [`README.zig.md`](README.zig.md) § "Verification status", which is the one place
 this package's gate states are written down.
 
+### Native packaging
+
+`package.nix` is a standalone, source-only derivation over this same repository
+and this same `build.zig`. It exists because a C consumer wants a prefix, and
+it adds no compiler flags, no source list, no second build system and no files
+of its own: one real `zig build install --prefix $out` with the variant, width,
+CPU baseline, optimization mode and prefix named, and the build graph owning
+every installed artifact, header, tool, data file, licence record and
+pkg-config file — one writer per path.
+
+* `default` passes **no `-Dlinkage`**, so the linkage policy above — dynamic on a
+  GNU-libc target, static on every other — stays the policy; `static` and
+  `shared` are the two explicit variants of the same derivation.
+* `codeUnitWidth` selects 8, 16 or 32. The POSIX wrapper is width 8 only, and
+  its pkg-config file depends on that width's core through `Requires.private`,
+  because a consumer linking the wrapper needs the core's symbols too.
+* The installed licence material is required, not decorative: the BSD
+  binary-redistribution condition is the obligation that survives into a built
+  artifact, and `testdata/` carries a **different** grant — public domain —
+  which the output states where it applies.
+* No wholly-static-executable claim. A static **library artifact** is what
+  `-Dlinkage=static` produces; the C runtime a consumer links is its own.
+
+No Nix derivation, flake output or devenv shell for this package has been
+evaluated or built yet, by this role or by the driver, so all of it is
+`PENDING-VERIFICATION`; the rows are in [`README.zig.md`](README.zig.md)
+§ "Verification status".
+
 ## What is upstream's and is shipped unmodified
 
 Everything named in `build.zig.zon` `.paths` that this fork did not write:
@@ -294,8 +345,19 @@ Everything named in `build.zig.zon` `.paths` that this fork did not write:
 public header, the CMake config template, the POSIX wrapper, the test driver and
 the character-table source), `doc/` (upstream's manual, under the library's own
 terms), `LICENCE.md`, `COPYING`, `AUTHORS.md`, `SECURITY.md`, `HACKING`,
-`INSTALL`, `README.md`, and `testdata/` in full. No upstream source, header,
-test, licence or fixture byte is edited.
+`INSTALL`, and `testdata/` in full. No upstream source, header, test, licence or
+fixture byte is edited.
+
+**Upstream's README is preserved under a new name, not rewritten.** It used to
+be this repository's `README.md`; it is now `README.upstream.md`, byte for
+byte, because `README.md` is this fork's own canonical entry point. The bytes
+did not change: `sha256sum` printed
+`579446220c54f9b406a6c7b9b2bf155abf699c6e0b6211c7189f3aa1b174246d` for both
+files immediately before the move, and that is the digest the driver's
+extraction record names for this project, this commit and this preserved path
+(`local://foundation-contract-upstream-readme-proof.json`). `README.upstream.md`
+is upstream's work under upstream's terms; `README.md` is fork-authored, and
+[`FORK-LICENSE.md`](FORK-LICENSE.md) is the grant that covers it.
 
 ## What is carried but is not part of the package
 
@@ -366,8 +428,18 @@ Deliberately absent from the record, each for a stated reason:
   so the file is not byte-identical to upstream's.
 * `build.zig`, `build.zig.zon`, `translate.h`, `zig/`, `tests.zig`, `smoke.zig`,
   `consumer/`, `cross-test.profile.sh`, `.github/workflows/verify.yml`, `UPSTREAM.md`, `NOTICE.md`,
-  `CHANGELOG.md`, `FORK-NOTES.md`, `README.zig.md` — this fork's own files,
-  listed in [`NOTICE.md`](NOTICE.md).
+  `CHANGELOG.md`, `FORK-NOTES.md`, `README.zig.md`, `FORK-LICENSE.md`,
+  `README.md`, `package.nix`, `flake.nix`, `devenv.nix`, `devenv.yaml`,
+  `.envrc` — this fork's own files, listed in [`NOTICE.md`](NOTICE.md).
+* `README.upstream.md` — upstream's own README, and **still not hashed**, for
+  the same reason `README.md` was not hashed before it was relocated: the
+  record's scope is the bytes this package compiles, installs, reads as an
+  oracle and publishes terms for, and a document is none of those. Its
+  byte-identity with upstream is established by the driver's extraction record
+  instead — `local://foundation-contract-upstream-readme-proof.json`, naming
+  this commit, this project and the digest `579446220c54f9b406a6c7b9b2bf155abf699c6e0b6211c7189f3aa1b174246d`
+  — so the guarantee exists without being folded into a 59-record gate whose
+  receipts depend on that count.
 * `UPSTREAM.sha256` itself — a record cannot contain its own digest.
 * the rest of `testdata/` — upstream ships it whole and the package ships it
   whole, but only the eight files above are cited line by line by the fixture
@@ -443,12 +515,25 @@ gate state is listed once, in [`README.zig.md`](README.zig.md) §
 8. Bump `.version` in `build.zig.zon` to the new `major.minor.0`, update the pin
    in this file and in `README.zig.md`, and add one numbered `CHANGELOG.md`
    entry.
+9. Re-extract upstream's `README.md` over `README.upstream.md` for the new
+   tag, byte for byte, and record the new digest beside the pin above. That file
+   is preserved upstream text, so a version bump that forgets it would leave a
+   fork entry point describing the previous release — which is the mistake
+   this fork made by *not* keeping the two apart until 2026-10-04.
 
 ## See also
 
+* [`README.md`](README.md) — this fork's canonical entry point: the deviations,
+  the current build/run/test matrix, and consumption for Zig, C, Nix and
+  devenv.
+* [`README.upstream.md`](README.upstream.md) — upstream's own README, preserved
+  byte for byte at the pinned commit.
 * [`NOTICE.md`](NOTICE.md) — attribution, the licence and data split, every file
   this fork adds or edits, and the per-file exceptions.
-* [`README.zig.md`](README.zig.md) — how to build, import and call the package.
+* [`FORK-LICENSE.md`](FORK-LICENSE.md) — the grant for the fork-authored files
+  and the owner's authorization behind it.
+* [`README.zig.md`](README.zig.md) — how to build, import and call the package,
+  the external ABI boundaries, and the one current gate table.
 * [`CHANGELOG.md`](CHANGELOG.md) — numbered fork-only divergences.
 * [`FORK-NOTES.md`](FORK-NOTES.md) — the problems met while doing this, and
   what was decided.

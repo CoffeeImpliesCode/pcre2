@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause WITH PCRE2-exception
+# Copyright (c) 2026 the contributors to this fork.
+#
 # Public .gitignore file for PCRE2
 
 build/
@@ -129,12 +132,22 @@ zig-cache/
 
 # --- this fork ------------------------------------------------------------
 #
-# The Zig build graph here writes nothing into the source tree. The generated
-# pcre2.h, the copied pcre2_chartables.c and the generated config.h are build
-# outputs of `b.addWriteFiles` and `b.addConfigHeader`, so they land under the
-# build cache directory; the artifacts land in the install prefix. The four Zig
-# rules above carry no leading slash, so they match at any depth and already
-# cover the nested consumer package in consumer/ and its own cache and prefix.
+# The Zig build graph here writes nothing into the source tree. Everything it
+# generates - the pcre2.h copy, the copied pcre2_chartables.c, the generated
+# config.h, the expanded libpcre2-*.sym version scripts, the .pc files and the
+# pcre2-config script - is an output of `b.addWriteFiles`,
+# `b.addConfigHeader` or a `b.addSystemCommand`, so it lands under the build
+# cache directory; the artifacts land in the install prefix. `RunTest`'s own
+# `testoutput*` working directories land there too, because `upstream-test`
+# runs it with a generated current directory. The four Zig rules above carry no
+# leading slash, so they match at any depth and already cover the nested
+# consumer package in consumer/ and its own cache and prefix.
+#
+# The rules that cover generated metadata in a source build are already above
+# and are left alone: `*.pc` excludes a configured `.pc`, `pcre2-config`
+# excludes a generated one, and `src/libpcre2-*.sym` excludes a configured
+# version script. This graph generates all three into the cache instead, so
+# none of those paths is ever written here.
 #
 # Nothing this fork adds to the tree is excluded by any rule above, and none of
 # the rules above is removed or narrowed here: they belong to upstream's
@@ -147,6 +160,12 @@ zig-cache/
 # an upstream rule broadening to cover it. A negation cannot re-include a file
 # whose parent directory is excluded, so each directory is named as well as its
 # contents.
+#
+# The last five negations name the upstream templates build.zig `@embedFile`s.
+# None of them is excluded by a rule above today, and they are listed anyway:
+# `*.pc` is a suffix rule that a future upstream broadening could turn into a
+# prefix or substring rule, and a template that quietly vanished from a package
+# would cost the whole pkg-config closure rather than one file.
 !translate.h
 !cross-test.profile.sh
 !/zig/
@@ -154,5 +173,10 @@ zig-cache/
 !/smoke.zig
 !/consumer/
 !/testdata/
+!pcre2-config.in
+!libpcre2-8.pc.in
+!libpcre2-16.pc.in
+!libpcre2-32.pc.in
+!libpcre2-posix.pc.in
 
 # End

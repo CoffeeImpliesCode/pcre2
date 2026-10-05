@@ -67,11 +67,12 @@ pub const MatchAnswer = union(enum) {
     /// A UTF validity failure, with the exact number upstream returns.
     invalid_utf: struct {
         code: i32,
-        text: []const u8,
         /// The byte offset `pcre2_get_startchar` reports afterwards, or null
-        /// for the two early returns at `pcre2_match.c:7270-7279` that leave
-        /// the field untouched.
+        /// for the two early returns at `pcre2_match.c:7272-7276`, which do
+        /// not write the field and therefore leave it at the zero that
+        /// `src/pcre2_match.c:7120` reset it to.
         bad_offset: ?usize,
+        text: []const u8,
     },
     /// Any other negative return, with the number. Used to pin a code the
     /// facade deliberately does not split out.
@@ -107,6 +108,25 @@ pub const Case = struct {
     match_options: pcre2.MatchOptions = .{},
     limits: Limits = .{},
     answer: CaseAnswer = null,
+    /// The pattern and the subject are UTF-8 **bytes** whose code points
+    /// matter, rather than a byte string widened one byte per code unit.
+    ///
+    /// Upstream's expected output for `testoutput5` is a byte-oriented program,
+    /// and a `.` in a UTF pattern at width 16 or 32 matches one code unit
+    /// rather than one byte. A case marked here is decoded into code points
+    /// before it is compiled, and its expected captures are compared after
+    /// being re-encoded, so the same answer is checked at every width in the
+    /// terms that width actually uses.
+    utf_bytes: bool = false,
+    /// The expected number and text are the 8-bit validator's.
+    ///
+    /// Two of upstream's facts are of this kind and both are kept: the 8-bit
+    /// validator has its own error numbers for a malformed subject
+    /// (`src/pcre2_valid_utf.c`, `src/pcre2_match.c:7272-7276`), and a 16- or
+    /// 32-bit library has a different validator whose numbers are a different
+    /// fact rather than the same one at another width. The width-generic
+    /// statement about them is `malformed_is_refused_by_the_validator` below.
+    eight_bit_only: bool = false,
     /// Checked only when the pattern has names. Upstream's highest group
     /// number, so `captureCount()` has something to compare against.
     capture_count: ?u32 = null,
@@ -154,6 +174,24 @@ comptime {
     if (a_run_then_z.len != 14 or a_run_then_z[13] != 'z')
         @compileError("a_run_then_z must be 13 'a' followed by 'z', as in testdata/testinput15:61");
 }
+
+/// One code unit per width that the width's own validator must refuse, as a
+/// UTF pattern's subject.
+///
+/// Three facts, one per width, and none of them translatable into another: the
+/// three validators in `src/pcre2_valid_utf.c` are different programs, and the
+/// shortest thing each of them refuses is different. What they agree on is the
+/// shape, and that is what the case using this table asserts.
+///
+/// * `0x80` as a byte: a continuation byte with nothing in front of it, which
+///   is what `PCRE2_ERROR_UTF8_ERR20` names.
+/// * `0xd800` as a code unit: a high surrogate with no low surrogate after it.
+/// * `0x110000` as a code unit: one past the last code point Unicode defines.
+pub const malformed_units: [3][]const u32 = .{
+    &.{0x80},
+    &.{0xd800},
+    &.{0x110000},
+};
 
 /// What `pcre2_match` must answer. Null for a pattern upstream refused: there
 /// is nothing to match with, and a placeholder answer would be a claim nobody
@@ -280,6 +318,7 @@ pub const cases = [_]Case{
         \\and the match is bytes 1 through 5.
         ,
         .pattern = "..",
+        .utf_bytes = true,
         .compile = .{ .utf = true },
         .subject = "\n\u{123}\u{123}\u{123}\u{123}",
         .answer = .{ .matched = &.{
@@ -299,12 +338,14 @@ pub const cases = [_]Case{
         \\is 0x80 as required; and the case 1 arm at :186-190 evaluates
         \\"(c & 0x3e) == 0" for 0xC0, which is true, so it stores
         \\"(p - string) - 1". p is then at index 2, so the stored offset is 1,
-        \\and it returns PCRE2_ERROR_UTF8_ERR15. src/pcre2_match.c:7334 keeps
+        \\and it returns PCRE2_ERROR_UTF8_ERR15, -17
+        \\(src/pcre2.h.generic:369). src/pcre2_match.c:7334 keeps
         \\that offset and :7335 returns the code, because
         \\PCRE2_MATCH_INVALID_UTF is not set. The 17th entry of
-        \\match_error_texts in src/pcre2_error.c is "UTF-8 error: overlong
+        \\match_error_texts in src/pcre2_error.c:239 is "UTF-8 error: overlong
         \\2-byte sequence".
         ,
+        .eight_bit_only = true,
         .pattern = ".",
         .compile = .{ .utf = true },
         .subject = "A\xC0\xAF",
@@ -317,16 +358,18 @@ pub const cases = [_]Case{
     .{
         .name = "isolated_continuation_byte_is_an_invalid_utf_failure",
         .provenance =
-        \\Hand-derived, for the same reason. src/pcre2_match.c:7270-7279 runs
+        \\Hand-derived, for the same reason. src/pcre2_match.c:7272-7276 runs
         \\before the validator: the subject is not empty, NOT_FIRSTCU is true
         \\for 0x80, and the start offset is 0, so the interpreter returns
-        \\PCRE2_ERROR_UTF8_ERR20 immediately. That path does not write
-        \\startchar, which is why bad_offset is null and why this facade
-        \\documents startOffset as meaningful only after a match or after a
-        \\validity failure that went through the validator. The 22nd entry of
-        \\match_error_texts in src/pcre2_error.c is "UTF-8 error: isolated byte
-        \\with 0x80 bit set".
+        \\PCRE2_ERROR_UTF8_ERR20, -22 (src/pcre2.h.generic:374), immediately.
+        \\That path does not write startchar, so it keeps the zero that
+        \\src/pcre2_match.c:7120 reset it to; that is why bad_offset is null and
+        \\why this facade documents startOffset as meaningful only after a
+        \\match, after a validity failure that went through the validator, or
+        \\after PCRE2_ERROR_PARTIAL. The message is the 22nd entry of
+        \\match_error_texts in src/pcre2_error.c:245.
         ,
+        .eight_bit_only = true,
         .pattern = ".",
         .compile = .{ .utf = true },
         .subject = "\x80",

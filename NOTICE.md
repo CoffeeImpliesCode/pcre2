@@ -36,7 +36,7 @@ content**, not one grant over one tree:
 
 | Path | Grant | Why |
 |---|---|---|
-| `src/`, `doc/`, and the build and packaging files | **BSD-3-Clause WITH PCRE2-exception** | "Releases 10.00 and above of PCRE2 are distributed under the terms of the 'BSD' licence… The documentation for PCRE2, supplied in the 'doc' directory, is distributed under the same terms as the software itself" (`LICENCE.md:10-13`) |
+| `src/`, `doc/`, and this fork's build and packaging files | **BSD-3-Clause WITH PCRE2-exception** | for `src/` and `doc/`: "Releases 10.00 and above of PCRE2 are distributed under the terms of the 'BSD' licence… The documentation for PCRE2, supplied in the 'doc' directory, is distributed under the same terms as the software itself" (`LICENCE.md:10-13`). For the fork's own files the same identifier is **separately granted** in [`FORK-LICENSE.md`](FORK-LICENSE.md); matching the identifier is not an inference that upstream's grant reaches them |
 | **`testdata/`** | **not copyrighted; in the public domain** | "The data in the testdata directory is not copyrighted and is in the public domain" (`LICENCE.md:14`). This is not a BSD grant and nothing here restates it as one |
 | the just-in-time compiler (`src/pcre2_jit_compile.c` and its `_inc.h` files, `deps/sljit`) | **2-clause BSD** | "the just-in-time compiler… is separately licensed under the '2-clause BSD' licence" (`LICENCE.md:16-20`), and "The code in the `deps/sljit` directory has its own LICENSE file" (`LICENCE.md:57`) |
 | `.gitignore` | BSD-3-Clause WITH PCRE2-exception, as upstream's | upstream's file; this fork appends to it and does not remove or narrow any of upstream's entries — see the change table below |
@@ -45,10 +45,18 @@ content**, not one grant over one tree:
   grant. This fork narrows nothing and re-grants nothing.
 * The fork-authored Zig build graph, manifest, aggregate header, facade, tests,
   smoke program, consumer, fixture module, `cross-test` harness profile, CI
-  workflow and documentation have no stated licence; their status is
-  **unassigned**. The earlier offer under BSD-3-Clause WITH PCRE2-exception was
-  unsupported and is withdrawn. No grant over these additions may be inferred
-  from the upstream terms.
+  workflow, Nix and devenv packaging and documentation are granted
+  **`BSD-3-Clause WITH PCRE2-exception`**, the identifier upstream states for
+  itself at `LICENCE.md:4`. The grant, the owner's direct authorization behind
+  it and the verbatim terms are in [`FORK-LICENSE.md`](FORK-LICENSE.md).
+  Copyright for those additions is held by **the contributors to this fork**;
+  no upstream author is attributed with them and no individual is invented.
+* The earlier record — that these files had no stated licence, were
+  **unassigned**, and that an earlier offer of these terms was unsupported and
+  withdrawn (`CHANGELOG.md` entry 21) — described the state before that
+  authorization and is superseded for these files only. The entry stays in
+  `CHANGELOG.md` as history: a withdrawn grant and its replacement are both part
+  of the record.
 * `deps/sljit` is an **empty directory** in this checkout: the git submodule
   named in `.gitmodules:1-3` was never populated, nothing in this package
   compiles or links it, and no sljit licence text is shipped here because there
@@ -119,9 +127,26 @@ driver, not a verification this fork performed.
 **No upstream source file, header, test, licence text or fixture byte is
 modified.** `UPSTREAM.sha256` records the SHA-256 of 59 files the package
 compiles, installs, reads as an oracle or publishes terms for, plus this fork's
-own fixture module, and `sha256sum -c UPSTREAM.sha256` is the check. That
-command **has been run here and passed**: exit 0, 59 records, every line `OK`
-(`local://foundation-expansion-pcre2-immutable-source-integrity-168.log`), and
+own fixture module, and `sha256sum -c UPSTREAM.sha256` is the check. What is
+known about that check is kept in three separate pieces, because they are three
+different kinds of statement:
+
+* **2026-10-01, run, passed.** Exit 0, 59 records, every line `OK`
+  (`local://foundation-expansion-pcre2-immutable-source-integrity-168.log`).
+  That receipt is the earlier tree, and it stays the earlier tree's result.
+* **A later sweep by the driver, run, red on one record.** 58 `OK` and one
+  failing line, `testdata/foundation-fixtures.zig`, which this wave edited after
+  its digest was taken. All 58 upstream records verified; the failing record is
+  this fork's own fixture module, so no upstream byte was at issue.
+  [`README.zig.md`](README.zig.md) § "Verification status" carries that row.
+* **2026-10-04, one record re-read.** `sha256sum testdata/foundation-fixtures.zig`
+  printed `349422fcc06e7e370eaee344809d65439be878ccdd93461806ba14a8387f33a6`,
+  which is the digest recorded for that path at `UPSTREAM.sha256:124`. That is
+  one file compared against one record, **not** a replay of
+  `sha256sum -c UPSTREAM.sha256` over all 59, so nothing here claims the gate
+  passes now. The full replay is owed by the driver, and no result is asserted
+  for it.
+
 `.github/workflows/verify.yml` runs the same command as the first step of its
 native job.
 
@@ -129,23 +154,56 @@ One upstream file is edited, and only by appending:
 
 | File | Change |
 |---|---|
-| `.gitignore` | upstream's own list is kept verbatim and unedited — `build/`, `build-*/`, `pages/`, the object and coverage patterns, the autotools and CMake outputs, the `m4/libtool*` set, the `src/` generated-file list, `/bazel-*`, `*.bazel.lock`, `zig-pkg/`, `zig-out/`, `zig-cache/`, `.zig-cache/`, `.vscode/`, `.devcontainer/`, `.personal/` (`.gitignore:1-128`). The fork appends one comment block and **seven** re-inclusion lines, `!translate.h`, `!cross-test.profile.sh`, `!/zig/`, `!/tests.zig`, `!/smoke.zig`, `!/consumer/`, `!/testdata/` (`.gitignore:130-156`). No upstream entry is removed or narrowed. Because the file is therefore not byte-identical to upstream's, it is deliberately absent from `UPSTREAM.sha256` |
+| `.gitignore` | upstream's own list is kept verbatim and unedited — `build/`, `build-*/`, `pages/`, the object and coverage patterns, the autotools and CMake outputs, the `m4/libtool*` set, the `src/` generated-file list, `/bazel-*`, `*.bazel.lock`, `zig-pkg/`, `zig-out/`, `zig-cache/`, `.zig-cache/`, `.vscode/`, `.devcontainer/`, `.personal/` (`.gitignore:1-131`). The fork appends one comment block (`.gitignore:133-181`) and **twelve** re-inclusion lines, `!translate.h`, `!cross-test.profile.sh`, `!/zig/`, `!/tests.zig`, `!/smoke.zig`, `!/consumer/`, `!/testdata/`, `!pcre2-config.in`, `!libpcre2-8.pc.in`, `!libpcre2-16.pc.in`, `!libpcre2-32.pc.in`, `!libpcre2-posix.pc.in` (`.gitignore:169-180`). No upstream entry is removed or narrowed. Because the file is therefore not byte-identical to upstream's, it is deliberately absent from `UPSTREAM.sha256` |
 
 Everything else this fork adds is new, in new files and new regions:
 
+One file in the list below is a **preserved copy of an upstream file** rather
+than something this fork wrote. `README.upstream.md` is upstream's own
+`README.md` at the pinned commit, byte for byte, kept so that a reader has
+upstream's own words without fetching anything. It used to *be* this
+repository's `README.md`; `README.md` is now this fork's canonical entry point
+and the upstream bytes moved to `README.upstream.md` unchanged. Three things
+follow, and none of them is an inference:
+
+* the move is **not** a new upstream-file edit. `sha256sum README.upstream.md
+  README.md` printed `579446220c54f9b406a6c7b9b2bf155abf699c6e0b6211c7189f3aa1b174246d`
+  for **both** files on 2026-10-04, immediately before the relocation;
+* that digest is the one the driver's own extraction recorded in
+  `local://foundation-contract-upstream-readme-proof.json`, which names this
+  project's `primary_readme` `README.md`, its `preserved_path`
+  `README.upstream.md`, the pinned commit `6f9d7c1373262c541324a16a358785b33ef116cf`
+  and the same digest. That record is outside this tree and is the
+  byte-identity receipt;
+* `UPSTREAM.sha256` still does **not** cover it, exactly as it did not cover
+  `README.md` before. The record's scope is the bytes this package compiles,
+  installs, reads as an oracle and publishes terms for; a README is none of
+  those, and widening the record to a document would change a 59-record
+  integrity gate whose own receipts depend on the count.
+
 | File | What it is |
 |---|---|
-| `build.zig` | Zig 0.16 build graph. Extends upstream's own Zig graph rather than replacing it: the `pcre2.h` copy, the `config.h` generation, the explicit 31-unit compile list, and the `linkage` / `sanitize_c` / `code-unit-width` options all still do that work. Adds the `pcre2` module, the `test`, `smoke` and `check` steps, the six-target compile-only check, the real `-fsys=pcre2-8` system option, and the private `AggregateRoute` / `aggregateRoute` / `preprocessedAggregate` pair that chooses, per target, whether the bundled aggregate is read by Aro alone or by the target's own `zig cc -E -dD -fno-blocks` first. Removes the `sljit` dependency and `-Dsupport_jit`, which cannot work without a populated submodule or a network fetch |
-| `build.zig.zon` | package manifest, dependency-free, `.paths` = what a dependent receives. `.version` is checked against the pin at configure time |
+| `build.zig` | Zig 0.16 build graph. Extends upstream's own Zig graph rather than replacing it: the `pcre2.h` copy, the `config.h` generation, the explicit 30-unit core source list (`build.zig:365-396`), and the `linkage` / `sanitize_c` / `code-unit-width` options all still do that work. Adds the `pcre2` module, the `test`, `smoke` and `check` steps, the six-target compile-only check, the real `-fsys=pcre2-8` system option, and the private `AggregateRoute` / `aggregateRoute` / `preprocessedAggregate` pair that chooses, per target, whether the bundled aggregate is read by Aro alone or by the target's own `zig cc -E -dD -fno-blocks` first. Removes the `sljit` dependency and `-Dsupport_jit`, which cannot work without a populated submodule or a network fetch |
+| `build.zig.zon` | package manifest, dependency-free, `.paths` = what a fetched copy carries and what its hash is taken over: this fork's graph and harness profile, `zig/`, `runtime/`, the facade's tests, smoke program and consumer package, upstream's `src/`, `doc/`, `testdata/`, `RunTest`, the pkg-config and `pcre2-config` templates, upstream's own records, this fork's provenance records, and the Nix and devenv packaging below. `.version` is checked against the pin at configure time |
 | `cross-test.profile.sh` | fork-authored harness configuration, not documentation and not a build input: ordinary Bash variable definitions that `cross-test` sources when it runs this package's `test` step over the published 53-platform matrix. It defines no hooks, no matrix and no host path, and nothing in `build.zig` reads it. Listed in `.paths` so a fetched copy carries it |
 | `translate.h` | the only new C file, and the aggregate `zig translate-c` is pointed at: a macro prelude (`PCRE2_CODE_UNIT_WIDTH`, `PCRE2_STATIC` — both configured by `build.zig`, not written here), one `#include "pcre2.h"`, and the compiler's own `__int128_t` / `__uint128_t` restated under `#if defined(__SIZEOF_INT128__)`. It copies no prototype, restates no PCRE2 declaration and adds no feature; the two typedefs are the compiler's, guarded by the compiler's own statement that the target has the `__int128` extension |
-| `zig/root.zig` | the Zig facade: `Regex`, `MatchData`, `MatchContext`, `version`, the option structs, the outcome unions, the error set, and `pub const c` for the complete translated header |
+| `zig/root.zig` | the Zig facade: `Regex`, `MatchData`, `MatchContext`, `version`, the option structs, the outcome unions, the error set, `LoadSource` / `LoadError` / `load` / `loadedSource`, and `pub const c` for the complete translated header |
+| `zig/widthed.zig` | the typed surface of one code-unit width and everything on it that does not depend on which width it is. `zig/root.zig`'s `Regex`, `MatchData` and `MatchContext` are aliases into it, which is why the tests, the smoke program and the consumer package work at 8, 16 and 32 bits without naming one |
+| `zig/raw.zig` | one typed binding per entry point the header declares, generic over the width. Every function is an `inline fn` forwarding to the name the translation declared for the width being built; nothing here declares a type, constant or function of its own |
+| `zig/posix.zig` | upstream's POSIX `regcomp`/`regexec` emulation typed over the four `pcre2posix.h` entry points, with the ownership rule the wrapper itself has (`pcre2_regfree` is the only thing that releases a `regex_t`). It is also the one place that answers `Posix` as `.unavailable` rather than as a name, for a build that compiled no 8-bit wrapper beside the core |
+| `runtime/` | the `-Druntime=true` route, carried whole in `.paths` and reached through exactly one seam, `const graph = @import("runtime/graph.zig")` (`build.zig:269`). `runtime/graph.zig` wires it together and is the only one of the six the build graph names. `runtime/library.zig` is PCRE2's own descriptor — the namespaced synchronization binding, the symbol set a provider must export, the one load-time check. `runtime/generate.zig` is a **build-time host program**, compiled for `b.graph.host` and run through `b.addRunArtifact` (`runtime/graph.zig:365-402`); it reads what `addTranslateC` produced for the target being built and writes the dispatch module and the patched translation. It is not a module anything imports. `runtime/loader.zig` is the reusable loader core: `LoadSource`, `LoadError`, the process-global attempt state machine and the `dlopen`/`LoadLibraryExW` layer. `runtime/sync.c` and `runtime/sync.h` are the one statically initialized mutex and condition variable per `RT_SYNC_PREFIX`, compiled into the dispatch with `-DRT_SYNC_PREFIX=pcre2_rt` (`runtime/graph.zig:350-354`). **The last four of those six are one shared body** across this workspace's SDKs rather than work written for PCRE2: `diff` against `fast_float/runtime/` leaves only the SPDX line and the `sync.h` include guard different, so the same four files appear under each project's own licence identifier and each SDK's own guard |
 | `tests.zig` | 10 behavioural tests: the 15-case fixture table replay, the bounds the facade owns, the name-table order and padding contract, the version-buffer contract, the ownership transitions, and the capture-lifetime cases — including `an attempt that did not match leaves nothing readable, whatever the last one found`, which is the permanent regression for the root-match validity rule |
 | `testdata/foundation-fixtures.zig` | **fork-authored**, 15 known answers. Every entry names the upstream `testdata/` file and line it was read out of, or states that it was hand-derived from the C and shows the derivation. Upstream ships no such file |
 | `smoke.zig` | the deterministic example behind `zig build smoke`; every expected byte offset is worked out by hand and a mismatch exits non-zero |
 | `consumer/` | a separate package that depends on this one by relative path and runs a structured-log reader through the published module |
 | `.github/workflows/verify.yml` | this fork's own verification workflow: the integrity check, the native build, an installed-header C gate that compiles, links and runs a C program against the **installed** `pcre2.h`, `pcre2-posix` and both installed libraries, Debug and ReleaseSafe tests, smoke, one `check` job per cross target, the `-fsys=pcre2-8` job, and the consumer package. The C gate asks the library about captures, names, both substring ownership rules, a Greek UTF-8 property, a non-Greek refusal and the POSIX wrapper's own `REG_NOMATCH`; it declares no name PCRE2 does not define, sizes the substring buffer with `sizeof` and checks `pcre2_get_ovector_count` before reading three offset pairs, and the only version it reports is the `pkg-config --modversion` of the package the system job installed. Upstream's eight workflows are left untouched and are not retargeted at this repository. **The workflow itself has never been executed here**, so it is a description and not a result |
-| `UPSTREAM.md`, `UPSTREAM.sha256`, `NOTICE.md`, `README.zig.md`, `CHANGELOG.md`, `FORK-NOTES.md` | provenance, integrity and fork documentation |
+| `README.md` | this fork's canonical entry point, replacing the copy of upstream's README that used to hold this name. Fork-authored, and ordered as the contract asks: native-source deviations, native-build deviations with a dated history link, the current build/run/test matrix, then consumption. It links [`README.zig.md`](README.zig.md) for the Zig interface rather than restating it, and it says so explicitly |
+| `README.upstream.md` | **upstream's own README, byte for byte**, preserved beside it. Not fork-authored; see the note above this table |
+| `package.nix` | the standalone derivation: one injected, source-only derivation used by both entry points, with `linkage` and `codeUnitWidth` as arguments. It adds no C flags, no source list and no second build system, and it installs no files of its own — the build graph owns the artifacts, headers, tools, data, licence records and pkg-config metadata, so there is one writer per path |
+| `flake.nix`, `flake.lock` | the flake entry points — `packages.<system>.default` (the SDK's own linkage policy, unforced), `.static` and `.shared`, plus a tools-only `devShells.default` that reads its tool list from `devenv.nix` rather than restating it — and the locked input revisions they resolve against, so a fetched copy builds the same inputs this tree does |
+| `devenv.nix` | the **canonical** development environment. Tools only; the SDK's variants are lazy `outputs`, built on demand with `devenv build outputs.static`, so entering the shell never builds the SDK. Cache locations are read from `HOST_SCRATCH_ROOT` at shell time and only where the caller has not already chosen one, so no committed file holds a host path |
+| `devenv.yaml`, `.envrc` | the devenv input declaration at a pinned rev, and the documented `use devenv` bridge. devenv 2.4.1 has no `--dotfile` flag and none is written |
+| `UPSTREAM.md`, `UPSTREAM.sha256`, `NOTICE.md`, `FORK-LICENSE.md`, `README.zig.md`, `CHANGELOG.md`, `FORK-NOTES.md` | provenance, integrity, licence grant and fork documentation |
 
 ## Credits upstream records, which are not grants
 
@@ -162,14 +220,18 @@ installed library is.
 
 ## Status
 
-Every claim above is read out of a file in this tree, so it is
-`SOURCE-CONFIRMED` by construction. The gate results are a separate matter and
-are listed once, in [`README.zig.md`](README.zig.md) § "Verification status".
-The short form: against this tree's own 10.49 library the integrity record, the
-Debug and ReleaseSafe suites with smoke and install, and the consumer package
-have **passed**; all six cross-target `check` compiles are **green** in the
-corrected baseline of 2026-10-02, where the three GNU-libc cells had been red;
-and the published 53-platform matrix reports **20 cells executed at `10/10`
+Every claim above is read out of a file in this tree or out of a named receipt,
+and each of them says which of the two it is. The gate results are a separate
+matter and are listed once, in [`README.zig.md`](README.zig.md) § "Verification
+status". The short form: the Debug and ReleaseSafe suites with smoke and
+install, and the consumer package, **passed** against this tree's own 10.49
+library in the **2026-10-01** runs, and those runs saw the tree as it stood on
+that date; the integrity record passed in the 2026-10-01 run and was red on one
+fork-authored record in the driver's later sweep, so its current state is the
+three-part statement above and not a result; all six cross-target `check`
+compiles are **green** in the corrected baseline of 2026-10-02, where the three
+GNU-libc cells had been red; and the published 53-platform matrix reports
+**20 cells executed at `10/10`
 tests, 0 failures and 33 compile-only cells**. `-fsys=pcre2-8` has been run
 against an installed **10.45** and returned `9 pass, 1 fail` on one fixture's
 compile-error offset; that run and the installed-C program are the 2026-10-01
@@ -180,3 +242,18 @@ filtered-package result and identity are recorded by the driver outside this
 tree — in the root `FORKS.json` under `cross_test_wave.materialized_packages.pcre2`
 and in `local://foundation-cross-test-package-regression.json` — because this
 documentation is part of what the package ships.
+
+**The 2026-10-04 packaging and licence wave adds claims, not results.** The
+Nix derivation, the flake, the devenv environment, the relocated README and the
+fork licence grant landed with no gate behind them: `package.nix`,
+`flake.nix`, `devenv.nix`, `devenv.yaml`, `.envrc`, `README.md` and
+`FORK-LICENSE.md` have never been evaluated or built, by this role or by the
+driver, so their state is `PENDING-VERIFICATION` and the rows that describe them
+in [`README.zig.md`](README.zig.md) § "Verification status" say so. Nothing
+above this line was weakened to accommodate them: the licence text, the two
+per-file exceptions and the 59-record integrity scope are unchanged, and the
+earlier observed results are still the earlier ones. The rows this wave added to
+the inventory — `zig/widthed.zig`, `zig/raw.zig`, `zig/posix.zig` and `runtime/`
+— name fork-authored files the integrity record has never covered, which is why
+adding them changed neither a grant, nor the record's scope, nor its record
+count.

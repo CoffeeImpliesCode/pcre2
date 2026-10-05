@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: BSD-3-Clause WITH PCRE2-exception
+# Copyright (c) 2026 the contributors to this fork.
+#
 # cross-test.profile.sh — settings only, for the `cross-test` harness.
 #
 # `cross-test` is run from this package root. It compiles and runs this
@@ -19,19 +22,27 @@
 # GNU-libc cell needs one — which on this matrix is the two MinGW targets,
 # whose `Abi` is `gnu`.
 #
-# Licence: **none asserted.** This is a fork-authored file, like `build.zig`,
-# `translate.h`, `zig/root.zig`, `tests.zig` and `consumer/`. Upstream PCRE2 is
-# BSD-3-Clause WITH PCRE2-exception and that grant is untouched; it does not
-# reach this file, and `NOTICE.md` records the fork's own files as unassigned.
+# Licence: **BSD-3-Clause WITH PCRE2-exception**, the grant this fork's
+# owner-authorized additions carry and the identifier upstream's own
+# `LICENCE.md:4` states. That is a change from what this file said before
+# 2026-10-04 ("none asserted"), which described the state before the
+# authorization and is kept as history in `CHANGELOG.md`. Upstream PCRE2's
+# grant is untouched and this file is not part of it; `FORK-LICENSE.md` is the
+# record and `NOTICE.md` is the inventory.
 
 # The step that runs the public Zig API tests. This is the harness default too;
 # it is named here so the package's contract is in the package.
 CROSS_BUILD_STEP=test
 
 # One target at a time inside one `zig build`. Per target this graph compiles
-# the 29-unit 8-bit core, the POSIX wrapper, `pcre2test` and the translate-c
+# the 30-unit 8-bit core, the `pcre2.h` copy, the `config.h`, the translate-c
 # aggregate, and links the facade twice; two parallel jobs per target keeps
 # that from serialising.
+#
+# `test` depends only on the facade unit tests and the smoke program, so the
+# upstream programs, the pkg-config metadata, `pcre2-config` and the
+# documentation are *not* compiled here: they are delivery, and delivery is
+# gated by `zig build` on a native target and by the `native` CI job.
 CROSS_BUILD_JOBS=2
 
 # Deadline for one `zig build test -Dtarget=…`. `test` depends only on the

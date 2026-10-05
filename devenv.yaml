@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-3-Clause WITH PCRE2-exception
+# Copyright (c) 2026 the contributors to this fork.
+#
+# devenv's input declaration. The nixpkgs is a fixed revision, not the moving
+# `rolling` branch: this SDK pins Zig 0.16.0 and a shell that silently changed
+# its compiler under a dev-shell entry would be a different environment wearing
+# the same name. The driver owns `devenv.lock`; this rev is what that lock
+# records, and it is the same devenv-nixpkgs rev the current lock generation in
+# this workspace resolves to.
+inputs:
+  nixpkgs:
+    url: github:cachix/devenv-nixpkgs/c2f38fe7f9e04d9aadd354d380f2bd40531d9737

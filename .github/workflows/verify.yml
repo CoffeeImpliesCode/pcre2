@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause WITH PCRE2-exception
+# Copyright (c) 2026 the contributors to this fork.
+#
 # Verification for this fork.
 #
 # Upstream's own workflows (build.yml, dev.yml, codeql.yml, clang-analyzer.yml,
@@ -7,20 +10,37 @@
 # written for this repository rather than retargeted from another maintainer's
 # infrastructure.
 #
-# Four jobs, four different questions:
+# Jobs, and the question each one asks:
 #
-#   native     does the full in-tree core build, do the *installed* pcre2.h
-#              and pcre2posix.h compile, link and run against the *installed*
-#              core library and *installed* POSIX wrapper, do the behavioural
-#              tests pass in Debug and ReleaseSafe, and does the smoke program
-#              produce its output on this host
-#   cross      does the core, the facade, the tests and the smoke compile and
-#              link for each of the six supported targets, without running them
-#   system     does -fsys=pcre2-8 bind the facade to an installed PCRE2 that is
-#              a different release from the one in this tree, which is the only
-#              way to tell the two apart
-#   consumer   does the published module resolve from a package that did not
-#              write it
+#   native          does the full in-tree core build; do the *installed*
+#                   pcre2.h and pcre2posix.h compile, link and run against the
+#                   *installed* core and POSIX wrapper; do the behavioural
+#                   tests pass in Debug and ReleaseSafe; does the smoke program
+#                   produce its output on this host
+#   installed-bin   do the installed programs run from the installed prefix with
+#                   no help from LD_LIBRARY_PATH - which is what proves the
+#                   $ORIGIN runpath this build writes - and does a shared
+#                   pcre2test really name libpcre2-8.so.0 rather than a path in
+#                   a build cache
+#   metadata        do the installed .pc files and pcre2-config describe the
+#                   artifacts that were actually installed, with the right
+#                   Requires.private and the right enabled widths
+#   static          the same installed-bin gate against `-Dlinkage=static`,
+#                   where the answers are an archive and no runpath at all
+#   widths          do `-Dcode-unit-width=16` and `=32` install that width's
+#                   library, header, .pc and programs, refuse the widths that
+#                   build did not produce, and run test/smoke against the
+#                   facade resolved for that width
+#   upstream-suite  does upstream's own RunTest suite pass against this build's
+#                   pcre2test, over upstream's own testdata
+#   cross           does the core, the facade, the tests and the smoke compile
+#                   and link for each of the six supported targets, without
+#                   running them
+#   system          does -fsys=pcre2-8 bind the facade to an installed PCRE2
+#                   that is a different release from the one in this tree, which
+#                   is the only way to tell the two apart
+#   consumer        does the published module resolve from a package that did
+#                   not write it, under each linkage
 #
 # Nothing here needs the network once checkout and the toolchain are in place.
 # build.zig.zon has no `.dependencies`, so there is nothing for Zig to fetch,
@@ -85,6 +105,10 @@ jobs:
       # this fork builds with, and the guard in `src/pcre2.h.generic` means the
       # rest of the header is self-sufficient for an application: no config.h
       # is needed to use the installed library.
+      #
+      # `-I zig-out/include` also proves the installed header tree is
+      # self-sufficient: `b.addWriteFiles` put the generated copy in the build
+      # cache, and nothing under `src/` is on this command line.
       - name: installed headers compile, link and run against the installed libraries
         run: |
           set -euo pipefail
@@ -254,13 +278,32 @@ jobs:
               return a || b || c;
           }
           C
-          zig cc -std=c11 -Wall -Wextra -Werror \
-            -DPCRE2_CODE_UNIT_WIDTH=8 \
-            -I zig-out/include \
-            "$RUNNER_TEMP/c_surface_gate.c" \
-            -L zig-out/lib -lpcre2-posix -lpcre2-8 \
-            -o "$RUNNER_TEMP/c_surface_gate"
-          LD_LIBRARY_PATH=zig-out/lib "$RUNNER_TEMP/c_surface_gate"
+          #
+          # Three link lines, one program, because each answers a different
+          # question about where the POSIX entry points are:
+          #
+          #   -lpcre2-8 alone                 the runtime provider case: the core
+          #                                    library must export all four
+          #                                    POSIX names by itself, since a
+          #                                    loader cannot find them in a library
+          #                                    it never opened and Windows
+          #                                    GetProcAddress does not search a
+          #                                    dependency's dependencies.
+          #   -lpcre2-posix -lpcre2-8         upstream's documented order: the
+          #                                    separate wrapper still resolves.
+          #   -lpcre2-8 -lpcre2-posix         the reverse order, so neither
+          #                                    artifact is silently unused and a
+          #                                    duplicate symbol would be reported
+          #                                    rather than absorbed.
+          for libs in "-lpcre2-8" "-lpcre2-posix -lpcre2-8" "-lpcre2-8 -lpcre2-posix"; do
+            zig cc -std=c11 -Wall -Wextra -Werror \
+              -DPCRE2_CODE_UNIT_WIDTH=8 \
+              -I zig-out/include \
+              "$RUNNER_TEMP/c_surface_gate.c" \
+              -L zig-out/lib $libs \
+              -o "$RUNNER_TEMP/c_surface_gate"
+            LD_LIBRARY_PATH=zig-out/lib "$RUNNER_TEMP/c_surface_gate"
+          done
 
       # Debug and ReleaseSafe are the two modes the gates above are run in: the
       # first catches a C object that is only instrumented in one of them and the
@@ -273,6 +316,320 @@ jobs:
 
       - name: smoke
         run: zig build smoke --summary all
+
+  installed-bin:
+    name: installed programs run from the installed prefix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      # The failure this job exists to catch is the one a build-tree run cannot
+      # see. `Step.Compile` puts `-rpath <build-cache-dir>` in every program it
+      # links, and that directory is gone once the cache is; an installed
+      # `bin/pcre2test` with only that runpath loads nothing at all. This
+      # build writes `$ORIGIN/../lib` for exactly this reason, and LD_LIBRARY_PATH
+      # is deliberately absent below so that the runpath is the only thing that
+      # can resolve the dependency.
+      - name: "build (default linkage: dynamic on this runner's glibc)"
+        run: zig build --summary all
+
+      - name: shared objects carry upstream's libtool sonames
+        run: |
+          set -euo pipefail
+          # configure.ac:16-19 gives libpcre2_8_version=16:1:16 and
+          # libpcre2_posix_version=3:9:0, so soversion is current-age: 0 and 3.
+          ls zig-out/lib/libpcre2-8.so.0.16.1
+          ls zig-out/lib/libpcre2-posix.so.3.0.9
+          # The sonames the loader will be asked for, and the two symlinks a
+          # linker resolves -l through.
+          readelf -d zig-out/lib/libpcre2-8.so.0.16.1 | grep -F 'SONAME' | grep -F 'libpcre2-8.so.0'
+          readelf -d zig-out/lib/libpcre2-posix.so.3.0.9 | grep -F 'SONAME' | grep -F 'libpcre2-posix.so.3'
+          test -L zig-out/lib/libpcre2-8.so.0
+          test -L zig-out/lib/libpcre2-8.so
+          test -L zig-out/lib/libpcre2-posix.so.3
+          test -L zig-out/lib/libpcre2-posix.so
+
+      # The runtime route can only work if the four POSIX entry points are in the
+      # CORE library, not only in the separate wrapper: `dlopen`/`dlsym` do not
+      # find a symbol in a library that was never opened, and Windows
+      # `GetProcAddress` does not search a dependency's dependencies. This is the
+      # gate for the whole provider surface, and it is where a missing export
+      # shows up as a file that has the symbol but no dynamic entry for it.
+      #
+      # `local: *;` in the generated version script hides every symbol the
+      # `global:` list does not name, so `nm -D` is the only honest check here:
+      # the source file being in the archive would not show up.
+      - name: the POSIX entry points are exported from the core library
+        run: |
+          set -euo pipefail
+          for sym in pcre2_regcomp pcre2_regerror pcre2_regexec pcre2_regfree; do
+            nm -D --defined-only zig-out/lib/libpcre2-8.so.0.16.1 | grep -F "$sym"
+          done
+          # ...and at the version node src/libpcre2-posix.sym.in uses, so the two
+          # libraries answer at the same version for the same four functions.
+          nm -D --defined-only zig-out/lib/libpcre2-8.so.0.16.1 \
+            | grep -F 'pcre2_regcomp@@PCRE2_10.47'
+          # The separate wrapper still exports them itself; this build does not
+          # replace it, because -lpcre2-posix is upstream's public name for it.
+          nm -D --defined-only zig-out/lib/libpcre2-posix.so.3.0.9 \
+            | grep -F 'pcre2_regcomp@@PCRE2_10.47'
+
+      - name: DT_NEEDED and RUNPATH of the installed pcre2test
+        run: |
+          set -euo pipefail
+          readelf -d zig-out/bin/pcre2test
+          # The sonames, not the build-cache paths they were linked against.
+          readelf -d zig-out/bin/pcre2test | grep -F '(NEEDED)' | grep -F 'libpcre2-8.so.0'
+          readelf -d zig-out/bin/pcre2test | grep -F '(NEEDED)' | grep -F 'libpcre2-posix.so.3'
+          readelf -d zig-out/bin/pcre2test | grep -F '(RUNPATH)' | grep -F '$ORIGIN/../lib'
+
+      # `pcre2test` reads its pattern file from stdin when given no file
+      # argument, and prints one line per offset pair it found. The expected
+      # line is worked out by hand: `(?<d>[0-9]+)-(?<w>[a-z]+)` against
+      # "42-forty" matches the whole subject, group 1 is "42" at bytes [0,2)
+      # and group 2 is "-forty" at bytes [2,8), so ` 2: 2-8`.
+      - name: pcre2test runs from bin/ with no LD_LIBRARY_PATH
+        run: |
+          set -euo pipefail
+          env -u LD_LIBRARY_PATH sh -c '
+            printf "/(?<d>[0-9]+)-(?<w>[a-z]+)/\n  42-forty\n" \
+              | zig-out/bin/pcre2test -q > "'"$RUNNER_TEMP"'/pcre2test.out"
+          '
+          cat "$RUNNER_TEMP/pcre2test.out"
+          grep -F ' 0: 0-8' "$RUNNER_TEMP/pcre2test.out"
+          grep -F ' 1: 0-2' "$RUNNER_TEMP/pcre2test.out"
+          grep -F ' 2: 2-8' "$RUNNER_TEMP/pcre2test.out"
+
+      # `pcre2grep -n pattern file` prints `line:linecontent` for each match,
+      # so `beta` on the second line of a two-line file prints exactly `2:beta`.
+      - name: pcre2grep runs from bin/ with no LD_LIBRARY_PATH
+        run: |
+          set -euo pipefail
+          printf 'alpha\nbeta\n' > "$RUNNER_TEMP/grep-input.txt"
+          env -u LD_LIBRARY_PATH zig-out/bin/pcre2grep -n 'bet' "$RUNNER_TEMP/grep-input.txt" \
+            | tee "$RUNNER_TEMP/pcre2grep.out"
+          test "$(cat "$RUNNER_TEMP/pcre2grep.out")" = '2:beta'
+
+      - name: the manual pages and the documentation are installed
+        run: |
+          set -euo pipefail
+          ls zig-out/share/man/man1/pcre2grep.1
+          ls zig-out/share/man/man1/pcre2test.1
+          ls zig-out/share/man/man3/pcre2posix.3
+          ls zig-out/share/doc/pcre2/pcre2pattern.txt
+          ls zig-out/share/doc/pcre2/html/pcre2pattern.html
+          # Upstream's own licence and authorship records, unmodified.
+          ls zig-out/share/doc/pcre2/LICENCE.md
+          ls zig-out/share/doc/pcre2/COPYING
+          ls zig-out/share/doc/pcre2/AUTHORS.md
+          # This fork's own records, so a prefix alone still says which bytes
+          # are upstream's and under what grant.
+          ls zig-out/share/doc/pcre2/NOTICE.md
+          ls zig-out/share/doc/pcre2/FORK-LICENSE.md
+          ls zig-out/share/doc/pcre2/UPSTREAM.md
+
+  metadata:
+    name: installed pkg-config and pcre2-config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: build
+        run: zig build --summary all
+
+      # Every expectation below is read out of the templates in this
+      # repository, not out of a run of a different release.
+      - name: the .pc files resolve and describe what was installed
+        run: |
+          set -euo pipefail
+          # ${pcfiledir} is absolute by definition in a .pc file, so the prefix
+          # the metadata resolves to is the realpath of the install directory.
+          PREFIX="$(realpath zig-out)"
+          export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
+
+          pkg-config --exists libpcre2-8
+          pkg-config --exists libpcre2-posix
+
+          # Version: `CMakeLists.txt:1191` and `configure.ac:10-13` both spell it
+          # major.minor with no patch component.
+          test "$(pkg-config --modversion libpcre2-8)" = '10.49'
+
+          # -lpcre2-8, and a -L that resolves through ${pcfiledir}/../.. to the
+          # directory the libraries were installed into.
+          pkg-config --libs libpcre2-8
+          pkg-config --libs libpcre2-8 | grep -F "$PREFIX/lib" | grep -F ' -lpcre2-8'
+
+          # A shared build declares the POSIX wrapper's entry points
+          # __declspec(dllimport) on Windows and plain extern elsewhere, and the
+          # .pc says so the same way configure.ac:741-753 does.
+          pkg-config --cflags libpcre2-posix | grep -F -- '-DPCRE2POSIX_SHARED'
+          pkg-config --cflags libpcre2-8 | grep -F "$PREFIX/include"
+          # ...and a shared core needs no PCRE2_STATIC.
+          ! pkg-config --cflags libpcre2-8 | grep -F 'PCRE2_STATIC'
+
+          # Requires.private is the relation between the two installed
+          # artifacts: --static pulls libpcre2-8 in for a wrapper that does not
+          # name it in Libs.
+          pkg-config --static --libs libpcre2-posix | grep -F ' -lpcre2-8'
+          # Libs.private is empty in both directions: nothing under src/ uses a
+          # thread, so there is nothing private to link.
+          test "$(pkg-config --static --libs libpcre2-8 | tr ' ' '\n' | grep -c -- '^-l' || true)" = '1'
+
+      - name: pcre2-config reports the version, the libs and the enabled widths
+        run: |
+          set -euo pipefail
+          PREFIX="$(realpath zig-out)"
+          test "$(zig-out/bin/pcre2-config --version)" = '10.49'
+          test "$(zig-out/bin/pcre2-config --prefix)" = "$PREFIX"
+
+          zig-out/bin/pcre2-config --libs8 | grep -F "$PREFIX/lib" | grep -F ' -lpcre2-8'
+          # --libs-posix names both artifacts, because the wrapper needs the
+          # core to answer any call (pcre2-config.in, the --libs-posix branch).
+          zig-out/bin/pcre2-config --libs-posix | grep -F ' -lpcre2-posix' | grep -F ' -lpcre2-8'
+          zig-out/bin/pcre2-config --cflags | grep -F "$PREFIX/include"
+
+          # This build produced only the 8-bit library, so the other two widths
+          # are absent from the usage line and answering for them is an error
+          # rather than a name for something that was never installed.
+          ! zig-out/bin/pcre2-config --libs8 2>&1 | grep -q -- '--libs16'
+          zig-out/bin/pcre2-config --libs16 && exit 1 || true
+
+  static:
+    name: static delivery (-Dlinkage=static)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      # The default on this runner is dynamic because its libc is GNU; this job
+      # names the other variant so both are built somewhere. "static" names a
+      # static library artifact, not a promise about the resulting program: the
+      # programs below are still dynamically linked against libc.
+      - name: build
+        run: zig build -Dlinkage=static --summary all
+
+      - name: archives instead of shared objects, and no version script output
+        run: |
+          set -euo pipefail
+          ls zig-out/lib/libpcre2-8.a
+          ls zig-out/lib/libpcre2-posix.a
+          test ! -e zig-out/lib/libpcre2-8.so
+          # The pkg-config files, the same headers and the same programs are all
+          # still installed: the linkage changes the artifact, not the closure.
+          export PKG_CONFIG_PATH="$PWD/zig-out/lib/pkgconfig"
+          pkg-config --exists libpcre2-8
+          # A static archive must be declared plain `extern` on Windows, and the
+          # .pc says so the way configure.ac:728-739 does.
+          pkg-config --cflags libpcre2-8 | grep -F -- '-DPCRE2_STATIC'
+          pkg-config --cflags libpcre2-posix | grep -v -- '-DPCRE2POSIX_SHARED'
+          ls zig-out/include/pcre2.h
+          ls zig-out/include/pcre2posix.h
+          ls zig-out/bin/pcre2test
+          ls zig-out/bin/pcre2grep
+          ls zig-out/bin/pcre2-config
+
+      # With no shared library there is nothing to resolve at run time, so these
+      # two need no LD_LIBRARY_PATH and no runpath. Running them at all is the
+      # point: a static build that only compiles would not catch a
+      # PCRE2_STATIC/PCRE2POSIX_SHARED disagreement on the import lines.
+      - name: pcre2test and pcre2grep run from bin/
+        run: |
+          set -euo pipefail
+          env -u LD_LIBRARY_PATH sh -c '
+            printf "/(?<d>[0-9]+)-(?<w>[a-z]+)/\n  42-forty\n" \
+              | zig-out/bin/pcre2test -q > "'"$RUNNER_TEMP"'/pcre2test-static.out"
+          '
+          grep -F ' 2: 2-8' "$RUNNER_TEMP/pcre2test-static.out"
+          printf 'alpha\nbeta\n' > "$RUNNER_TEMP/grep-input.txt"
+          test "$(env -u LD_LIBRARY_PATH zig-out/bin/pcre2grep -n 'bet' "$RUNNER_TEMP/grep-input.txt")" = '2:beta'
+
+      - name: test and smoke in the static configuration
+        run: |
+          zig build test -Dlinkage=static --summary all
+          zig build smoke -Dlinkage=static --summary all
+
+  widths:
+    name: ${{ matrix.width }}-bit delivery
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        width: ['16', '32']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      # `-Dcode-unit-width` selects upstream's library of that width and installs
+      # it whole. The POSIX wrapper, `pcre2demo`, `pcre2posix_test` and
+      # libpcre2-posix.pc are absent here and the row asserts that, because
+      # upstream's POSIX emulation is an 8-bit program by its own source
+      # (`src/pcre2posix.h` regmatch_t counts bytes).
+      - name: build
+        run: zig build -Dcode-unit-width=${{ matrix.width }} --summary all
+
+      - name: that width's library, header, .pc and programs are installed
+        run: |
+          set -euo pipefail
+          W=${{ matrix.width }}
+          ls "zig-out/lib/libpcre2-$W.so.0.16.1"
+          ls zig-out/lib/pkgconfig/libpcre2-$W.pc
+          ls zig-out/include/pcre2.h
+          ls zig-out/bin/pcre2test
+          ls zig-out/bin/pcre2-config
+
+          export PKG_CONFIG_PATH="$PWD/zig-out/lib/pkgconfig"
+          pkg-config --exists "libpcre2-$W"
+          pkg-config --exists libpcre2-8 && exit 1 || true
+          test -z "$(ls zig-out/lib/libpcre2-posix.* 2>/dev/null || true)"
+          # `Makefile.am` builds pcre2grep, pcre2posix_test and the POSIX
+          # wrapper only under `WITH_PCRE2_8`, and `src/pcre2grep.c:110`
+          # hard-codes `#define PCRE2_CODE_UNIT_WIDTH 8` besides.
+          test ! -e zig-out/bin/pcre2grep
+          test ! -e zig-out/bin/pcre2posix_test
+
+          # pcre2-config names the width it built and refuses the others.
+          zig-out/bin/pcre2-config --libs"$W" | grep -F " -lpcre2-$W"
+          zig-out/bin/pcre2-config --libs8 2>/dev/null && exit 1 || true
+
+      # The facade resolves to the width this build compiled, so `test`, `smoke`
+      # and `check` all run at this width rather than refusing. That is the point
+      # of this step: it is the first gate that exercises the 16- and 32-bit
+      # facades at all, and `check` covers the six cross targets for them too.
+      - name: test and smoke run at this width
+        run: |
+          zig build test -Dcode-unit-width=${{ matrix.width }} --summary all
+          zig build smoke -Dcode-unit-width=${{ matrix.width }} --summary all
+
+  upstream-suite:
+    name: upstream's own RunTest suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      # The authority on whether this fork's core still behaves like PCRE2.
+      # `tests.zig` replays a slice of upstream's own testdata through the Zig
+      # facade; this drives upstream's own `pcre2test` through all of it and
+      # diffs against upstream's own `testoutput*`, with `diff` deciding.
+      #
+      # JIT is off in this build, and RunTest knows that: it selects test 16
+      # ("JIT-specific features when JIT is not available") over test 17 and
+      # skips the JIT modes of every other test, so this is the whole suite this
+      # configuration can run and not a subset chosen here.
+      - name: upstream-test
+        run: zig build upstream-test --summary all
 
   cross:
     name: check ${{ matrix.target }}
@@ -347,8 +704,29 @@ jobs:
         run: zig build smoke -fsys=pcre2-8 --summary all
 
   consumer:
-    name: consumer package
+    name: consumer package (${{ matrix.linkage || 'default' }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - linkage: ''
+            runtime: ''
+          - linkage: '-Dlinkage=static'
+            runtime: ''
+          - linkage: '-Dlinkage=dynamic'
+            runtime: ''
+          # The runtime-loaded dispatch, under each linkage: the option is
+          # orthogonal to the other, so both facts are proved together rather
+          # than one at a time. This row builds and installs the real native
+          # artifact exactly as the linked rows do - delivery is not what
+          # -Druntime changes - and it proves the module links no library,
+          # because a consumer that resolved its symbols statically would still
+          # produce the same output.
+          - linkage: '-Dlinkage=static'
+            runtime: '-Druntime=true'
+          - linkage: '-Dlinkage=dynamic'
+            runtime: '-Druntime=true'
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
@@ -359,6 +737,20 @@ jobs:
       # a module that builds from the inside and does not resolve from outside.
       # `dep.module("pcre2")` carries the compiled core with it, so this also
       # proves that a dependent needs no path into this repository's tree.
+      #
+      # In the two shared rows the resolution happens at run time, by soname,
+      # through the platform loader: the module carries the build cache's entry,
+      # the cache directory `linkLibrary` recorded when the dependency linked
+      # its own shared object, so this program finds *this* build's
+      # `libpcre2-8.so.0` and not whatever the runner has in `/lib64`. The
+      # program's second line prints the version the library reports about
+      # itself, so a run that resolved a system library instead would say so
+      # rather than pass quietly.
+      #
+      # `-Dlinkage` is read in `consumer/build.zig` and forwarded to the
+      # dependency unchanged, so an unset value leaves the library's own default
+      # (dynamic on a GNU libc target, static elsewhere) in place and the other
+      # two rows name each variant explicitly.
       - name: run
         working-directory: consumer
-        run: zig build run --summary all
+        run: zig build run ${{ matrix.linkage }} ${{ matrix.runtime }} --summary all

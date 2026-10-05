@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause WITH PCRE2-exception
+// Copyright (c) 2026 the contributors to this fork.
 .{
     .name = .pcre2_consumer,
     .version = "0.1.0",
