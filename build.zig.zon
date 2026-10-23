@@ -1,102 +1,55 @@
 // SPDX-License-Identifier: BSD-3-Clause WITH PCRE2-exception
 // Copyright (c) 2026 the contributors to this fork.
 .{
-    // The default name a dependent writes in `b.dependency("pcre2", .{})`, and
-    // the prefix of the module it then reaches through `dep.module("pcre2")`.
+    // Import this package's facade with `dep.module("pcre2")`.
     .name = .pcre2,
-    // Upstream's release. build.zig refuses to configure when this drifts away
-    // from the pinned commit it carries there.
+    // Pinned upstream release; `build.zig` checks this version.
     .version = "10.49.0",
-    // Upstream ships this value in its own manifest and says, in the comment
-    // above it, "Do NOT change this for new releases. DO change this if making
-    // a fork of PCRE2 which is used by any Zig clients." This repository is
-    // such a fork, so it carries the value the Zig 0.16.0 compiler reported for
-    // `.name = .pcre2` with this `.version` rather than upstream's.
+    // Fork package identity generated for this name and version.
     .fingerprint = 0x914b3d639d1db54d, // Changing this has security and trust implications.
     .minimum_zig_version = "0.16.0",
-    // No `.dependencies`, and that is a change from upstream rather than an
-    // omission. Upstream declares a lazy `sljit` package dependency because
-    // `pcre2_jit_compile.c` compiles against it; its source is a git submodule
-    // under `deps/` or a package Zig fetches from the network, and a fork whose
-    // primary core compiles from its own tree with no build-time download can
-    // use neither. The dependency and the `-Dsupport_jit` option that reached it
-    // are both gone, and JIT is off, so `SUPPORT_JIT` is 0 in the generated
-    // config.h.
-    //
-    // The consumer package in `consumer/` has its own manifest and depends on
-    // this one by relative path, so it is deliberately not listed here: that
-    // would close a manifest cycle.
+    // JIT is disabled because SLJIT is not shipped; the consumer has a separate manifest.
     .dependencies = .{},
-    // Everything the package needs, and nothing else. `.paths` is what a
-    // `zig fetch` of this package carries and what its hash is taken over, so a
-    // file missing here is a file a fetched consumer cannot build or install
-    // from. The groups below say who owns each entry.
+    // `.paths` defines the files fetched with this package.
     .paths = .{
-        // ---- This fork's build graph ------------------------------------
+        // Fork build graph.
         "build.zig",
         "build.zig.zon",
-        // The harness settings for the published 53-platform `cross-test`
-        // matrix. Fork-authored configuration, not documentation and not a
-        // build input: nothing in this package's `build.zig` reads it. It
-        // ships so a fetched copy is the whole package, and it is listed here
-        // because upstream's broad `.gitignore` patterns do not exclude it.
+        // Cross-test settings shipped with the package; `build.zig` does not read them.
         "cross-test.profile.sh",
-        // The aggregate header handed to addTranslateC. Fork-authored and at the
-        // package root, so the upstream C tree under src/ stays byte-for-byte
-        // upstream's. It names the same pcre2.h the C core is compiled with.
+        // Aggregate translation header using the generated core header.
         "translate.h",
-        // The Zig facade.
+        // Zig facade.
         "zig",
-        // Its behavioural tests and its deterministic smoke program.
+        // Facade tests and smoke example.
         "tests.zig",
         "smoke.zig",
-        // Upstream's test data, which is also where this fork's independent
-        // fixtures module lives. build.zig names
-        // testdata/foundation-fixtures.zig by path, and the `upstream-test`
-        // step points `RunTest` at this directory, so a package built without
-        // it could neither configure nor run upstream's suite.
+        // Test inputs and fixtures used by the fork and upstream suite.
         "testdata",
-        // The separate consumer package. It is inside this repository so the
-        // dependency it proves is a relative path that resolves without a
-        // registry entry or a network fetch.
+        // Consumer package with a relative dependency on this package.
         "consumer/build.zig",
         "consumer/build.zig.zon",
         "consumer/src/main.zig",
 
-        // ---- Upstream's C sources and the generated inputs built from
-        // ---- upstream's templates --------------------------------------
-        // The whole compile list, the generic public header, the CMake config
-        // template and the character-table source the build copies. Upstream's
-        // own manifest ships `src/` whole and so does this one; that also
-        // carries `src/libpcre2-<width>.sym.in`, which build.zig reads for the
-        // shared libraries' export lists.
+        // Upstream C sources and templates.
+        // Includes the core, export maps, and distributed character tables.
         "src",
-        // The runtime-loading route. Owned by the API role, except for the
-        // reusable loader core the driver supplies. `build.zig` names the one
-        // seam in it and imports none of it, so a fetched package that has not
-        // enabled `-Druntime` still carries the files intact.
+        // Runtime-loader sources required by `-Druntime`.
         "runtime",
         "doc",
-        // Upstream's pkg-config templates. build.zig `@embedFile`s all four and
-        // substitutes only `@prefix@`-style tokens into them, so a fetched
-        // package without them could install no pkg-config metadata at all.
+        // Upstream pkg-config templates embedded by the build.
         "libpcre2-8.pc.in",
         "libpcre2-16.pc.in",
         "libpcre2-32.pc.in",
         "libpcre2-posix.pc.in",
-        // Upstream's own query script template, read the same way. The generated
-        // `pcre2-config` is upstream's script with this build's prefix and
-        // enabled widths substituted, not a rewrite of it.
+        // Upstream `pcre2-config` template.
         "pcre2-config.in",
 
-        // ---- Upstream's tests -------------------------------------------
-        // The suite driver `zig build upstream-test` runs. It needs `diff` and a
-        // writable directory, both of which the build step supplies, and the
-        // test data above.
+        // Upstream tests.
+        // `RunTest` and its test data are used by `zig build upstream-test`.
         "RunTest",
 
-        // ---- Upstream's licence, authorship and security records, and the
-        // ---- documentation this fork does not rewrite but installs -------
+        // Upstream licence, authorship, security records, and documentation.
         "LICENCE.md",
         "COPYING",
         "AUTHORS.md",
@@ -108,9 +61,7 @@
         "HACKING",
         "INSTALL",
 
-        // ---- This fork's provenance and licence records ------------------
-        // Installed beside upstream's so a downstream holding only the install
-        // prefix can still tell which bytes are upstream's and which are not.
+        // Fork provenance and licence records installed beside upstream's.
         "README.md",
         "README.zig.md",
         "README.upstream.md",
@@ -121,13 +72,9 @@
         "FORK-NOTES.md",
         "CHANGELOG.md",
 
-        // ---- This fork's Nix and devenv packaging -----------------------
-        // None of these is a build input: `build.zig` reads none of them, and
-        // `package.nix` adds no C flag, no source list and no second build
-        // system. They ship for the same reason `cross-test.profile.sh` ships
-        // above - a fetched copy is the whole package - and because a
-        // downstream that pins Nix inputs then gets this package's own
-        // `flake.lock` instead of resolving a fresh one against a registry.
+        // Nix and devenv packaging.
+        // Shipped for consumers; these files add no build sources or compile flags.
+        // `flake.lock` pins the Nix inputs.
         "package.nix",
         "flake.nix",
         "flake.lock",

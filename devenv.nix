@@ -1,39 +1,16 @@
 # SPDX-License-Identifier: BSD-3-Clause WITH PCRE2-exception
 # Copyright (c) 2026 the contributors to this fork.
 #
-# The canonical development environment. Tools in `packages`; the SDK itself is
-# never in the shell. Its variants are named as lazy `outputs`, so entering the
-# shell instantiates nothing and `devenv build outputs.static` builds the same
-# package.nix the flake exposes.
+# Canonical shell; lazy package variants use the same `package.nix` derivation.
 #
-# Scratch locations are read from the environment at shell time and only where
-# the caller has not already chosen a value: a committed file names no host
-# path, and a caller's own scratch is not overridden.
+# Fill caller-unset scratch variables without committing host paths.
 #
-# Each entry that reaches `zig build` settles the same question for itself
-# before it runs — its working directory, its build caches and its flags —
-# so a route needs no `HOST_SCRATCH_ROOT` to stay out of this checkout, and
-# still lets a caller who exported one of those win. The state the shell CLI
-# already created — devenv's runtime sockets, `DEVENV_ROOT`, `DEVENV_STATE` — is
-# not something this file can move after the fact.
+# Each task sets its working directory, caches, and flags; caller values win.
+# Devenv state paths and sockets are created before this file runs.
 #
-# Every entry below names this directory for itself. `devenv shell -- <name>`
-# runs an entry in the **caller's** working directory, and that directory is
-# not this tree: a `--from path:<sdk>` run creates its own project directory
-# beside the SDK, and `DEVENV_ROOT` points there. An entry that assumed it was
-# already in this repository looked for `UPSTREAM.sha256` and `consumer/` in a
-# directory that has neither. `./.` below is the directory holding *this* file,
-# which is the one fact that does not depend on where the caller is standing.
-# It covers scripts as well as tasks, because devenv materialises both as
-# generated shell programs that inherit the caller's directory.
+# Tasks may start in the caller's directory; entries explicitly switch to this SDK root.
 #
-# Every `zig build` below carries the workspace's gate recipe — `-j8`, an
-# explicit external `--cache-dir` and `--summary all` — because a canonical
-# entry that left the count to the host ran at whatever the machine happened to
-# offer, and one that left the cache to Zig wrote `.zig-cache` into this
-# checkout. They are named before `"$@"`, which stays last, and every one of
-# them is read last-wins, so a caller's own `-j`, `--cache-dir`, `--summary` or
-# `-D…` still wins over what this file names.
+# Set `-j8`, external cache, and summary defaults before `"$@"` so caller options win.
 { pkgs, ... }:
 
 let
@@ -41,34 +18,15 @@ let
 
   lib = pkgs.lib;
 
-  # This directory, as a plain string.
-  #
-  # `builtins.toString`, not a bare `${./.}`: interpolating the path itself asks
-  # Nix for its store copy, which is a read-only copy of this whole working tree
-  # rather than the tree these entries are gates of. `escapeShellArg` quotes
-  # the rendered string once, so a directory with a space or a quote in it
-  # still reaches the shell as a single argument.
+  # Resolve and shell-quote this file's source path, not a read-only Nix store copy.
   sdkRoot = builtins.toString ./.;
 
-  # `|| exit 1`, because a `cd` that fails leaves the body running in the
-  # caller's own directory, which is the one directory these entries must never
-  # build in: it has no `build.zig`, no `consumer/` and no `UPSTREAM.sha256`.
+  # Stop if `cd` fails; tasks must not build from the caller's directory.
   inSdk = "cd ${lib.escapeShellArg sdkRoot} || exit 1";
   inConsumer = "cd ${lib.escapeShellArg (sdkRoot + "/consumer")} || exit 1";
 
-  # Every real `zig build` below passes `--cache-dir` explicitly, so Zig never
-  # falls back to the `.zig-cache` it writes beside `build.zig` — inside this
-  # checkout for the five SDK-root entries, and a second one inside
-  # `<sdk>/consumer` for `sdk.consumer`. A caller's own cache variables win and
-  # are never overwritten: `ZIG_LOCAL_CACHE_DIR` is both the value `enterShell`
-  # exports from `HOST_SCRATCH_ROOT` and the one a caller sets for itself, and
-  # this runs in the body as well as in `enterShell`, because a `TasksRun` route
-  # never reaches that hook. A missing one is filled from `XDG_CACHE_HOME`, else
-  # from `TMPDIR`, because both are scratch the caller already named; with the
-  # local cache still unnamed the entry stops and says which variable is
-  # missing. No host path is named here: `/tmp` and `/var/tmp` are not approved
-  # mounts, this checkout is not scratch, and neither is written without the
-  # caller having said so.
+  # Keep both Zig caches outside the checkout; caller-specified locations take precedence.
+  # Fall back to `XDG_CACHE_HOME` or `TMPDIR`, and fail if neither provides external scratch.
   requireExternalCache = ''
     if [ -z "''${ZIG_LOCAL_CACHE_DIR:-}" ] || [ -z "''${ZIG_GLOBAL_CACHE_DIR:-}" ]; then
       if [ -n "''${XDG_CACHE_HOME:-}" ]; then
@@ -95,10 +53,9 @@ let
 in
 {
   packages = [
-    # The pinned compiler. A versionless `zig` on PATH is not this and must not
-    # gate this SDK.
+    # Use the pinned Zig 0.16 compiler.
+    # C toolchain and pkg-config for the consumer package.
     pkgs.zig_0_16
-    # The SDK's other consumer is a C program against an installed prefix.
     pkgs.stdenv.cc
     pkgs.pkg-config
     pkgs.gnumake
@@ -109,8 +66,7 @@ in
   outputs = {
     static = sdk "static";
     shared = sdk "dynamic";
-    # No `linkage`: the SDK's own policy, dynamic on GNU libc and static
-    # elsewhere.
+    # Leave linkage unset in the default variant so the target policy applies.
     default = sdk null;
   };
 
@@ -138,20 +94,8 @@ in
       exec = ''
         ${inSdk}
         ${requireExternalCache}
-        # An external `--prefix`. `zig build`'s own default is `zig-out` beside
-        # the build root, which in this workspace is a volume mount, so the
-        # default writes a delivery tree into the source repository. The
-        # prefix belongs under `ZIG_LOCAL_CACHE_DIR`: the caller's own value
-        # first, then the one `enterShell` fills in from `HOST_SCRATCH_ROOT`,
-        # then `XDG_CACHE_HOME` or `TMPDIR` — the preamble above has already
-        # settled that or stopped. The shell's `:?` form stays under it as a
-        # second refusal, not as a fallback.
-        #
-        # `-j8 --cache-dir … --summary all` is the workspace's gate recipe, and
-        # every `zig build` in this file names it, before `"$@"`. `"$@"` still
-        # comes last and each of those flags is read last-wins, so a caller who
-        # wants another count, another cache, another summary or a `-D…` still
-        # wins over what is named here.
+        # Install under the external local cache, not beside `build.zig`.
+        # Defaults precede `"$@"` so caller-supplied flags override them.
         zig build --prefix "''${ZIG_LOCAL_CACHE_DIR:?}/pcre2-install" -j8 --cache-dir "''${ZIG_LOCAL_CACHE_DIR:?}" --summary all "$@"
       '';
     };
@@ -161,9 +105,7 @@ in
       exec = ''
         ${inSdk}
         ${requireExternalCache}
-        # No `--prefix`: `test` installs nothing. The cache is the preamble's,
-        # outside this checkout, and the flags are the workspace's gate recipe,
-        # named before `"$@"` so a caller still wins with its own.
+        # Run tests without installing; use the external cache and overridable gate defaults.
         zig build test -j8 --cache-dir "''${ZIG_LOCAL_CACHE_DIR:?}" --summary all "$@"
       '';
     };
@@ -191,9 +133,7 @@ in
       exec = ''
         ${inSdk}
         ${requireExternalCache}
-        # `check` compiles six baseline targets and runs nothing, so it names no
-        # prefix; it is still a build, so it keeps the external cache and the
-        # gate flags.
+        # Compile-only check; no prefix is needed, but keep external cache and gate defaults.
         zig build check -j8 --cache-dir "''${ZIG_LOCAL_CACHE_DIR:?}" --summary all "$@"
       '';
     };
@@ -211,15 +151,7 @@ in
       exec = ''
         ${inConsumer}
         ${requireExternalCache}
-        # No `--prefix`: this package installs nothing. Its install step hangs
-        # on the executable's Compile step and installs no file
-        # (`consumer/build.zig:145-149`), so what this entry produces is a
-        # proof and a proof is not a deliverable. The cache is the preamble's —
-        # `ZIG_LOCAL_CACHE_DIR`, which `enterShell` exports and the preamble
-        # otherwise fills from `XDG_CACHE_HOME` or `TMPDIR` — because this body
-        # builds in `<sdk>/consumer`, where a default `.zig-cache` would be a
-        # second one inside this checkout; `--cache-dir` names it instead. The
-        # gate flags come before `"$@"`, as everywhere.
+        # Run the consumer proof without installing files; use the shared external cache.
         zig build run -j8 --cache-dir "''${ZIG_LOCAL_CACHE_DIR:?}" --summary all "$@"
       '';
     };

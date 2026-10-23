@@ -1,46 +1,14 @@
-//! Consumes the `pcre2` package the way an outside project would.
-//!
-//! Everything here goes through the published surface only: `b.dependency` in
-//! `build.zig`, and `@import("pcre2")` here. No path reaches into the library's
-//! own tree, and nothing is imported from the library's tests or fixtures, so
-//! if this builds and produces the answers below, the module contract is real.
-//!
-//! The task is a structured-log reader, which is the shape most callers have:
-//! one anchored pattern with named groups, an optional group that sometimes does
-//! not take part, and a result assembled into a buffer the caller owns. Every
-//! expected value is worked out by hand from the subject strings, so a mismatch
-//! is a real fault rather than a restatement of what the library just did. Any
-//! mismatch returns an error, so the process exits non-zero.
-//!
-//! ## Every width, and both linkages
-//!
-//! The pattern is widened into the compiled width's code units at compile time
-//! and each line's text at run time, into buffers this program owns, so the
-//! same hand-worked offsets are the answer at 8, 16 and 32 bits: the offsets
-//! below are code-unit offsets, which is what a 16- or 32-bit library reports
-//! as well, and every comparison is made in the width's code units rather than
-//! in bytes.
-//!
-//! The same source builds against a linked package and against a
-//! runtime-loaded one. `pcre2.runtime_loaded` is a comptime constant, so the
-//! difference is one branch and no duplicated program: in the runtime-loaded
-//! build the provider is named on the command line (`--provider <path>`) or in
-//! `PCRE2_TEST_PROVIDER`, loaded once, and the same published answers follow.
-//! Nothing is loaded by default and no other file is tried.
+//! External consumer of the published `pcre2` module.
+//! Exercises named captures across code-unit widths and supports linked or runtime loading.
 
 const std = @import("std");
 const pcre2 = @import("pcre2");
 
-/// The code unit this build compiled.
+/// Code-unit type selected by this build.
 const Unit = pcre2.compiled_unit;
 
-/// ASCII text as this width's code units.
-///
-/// A comptime array rather than a run-time widening, so the slices are
-/// container-level constants that outlive `main` and need no cleanup. This
-/// consumer's own text is ASCII, and a byte that the width's code unit could not
-/// hold would be a compile error rather than a pattern that means something
-/// else.
+/// Widen an ASCII constant to this build's code units at comptime.
+/// The returned slice has static storage and needs no cleanup.
 fn wide(comptime ascii: []const u8) []const Unit {
     if (ascii.len == 0) return &.{};
     const widened = comptime blk: {
@@ -56,13 +24,8 @@ fn wide(comptime ascii: []const u8) []const Unit {
     return &widened;
 }
 
-/// ASCII text as this width's code units, widened at run time.
-///
-/// `wide` above serves the pattern this file writes out, which is known at
-/// compile time. The two lines' own text comes out of a run-time loop, so it
-/// is widened here into a buffer the caller owns. Neither refusal below can
-/// fire for this consumer's own table: every line in it is ASCII, and the
-/// buffers `main` hands over are past its longest line.
+/// Widen runtime ASCII into caller-owned code-unit storage.
+/// Returns `TextNotWidened` when the output slice is too short.
 fn widen(ascii: []const u8, out: []Unit) error{TextNotWidened}![]const Unit {
     if (out.len < ascii.len) return error.TextNotWidened;
     for (ascii, 0..) |byte, i| {
@@ -72,16 +35,13 @@ fn widen(ascii: []const u8, out: []Unit) error{TextNotWidened}![]const Unit {
     return out[0..ascii.len];
 }
 
-/// `level[id] message`, with the bracketed id optional and the rest of the
-/// line taken verbatim. Anchored at both ends, so a trailing newline or a
-/// prefix is a non-match rather than a partial one.
+/// Anchored `level[id] message` pattern with an optional numeric id.
 const pattern = wide("^(?<level>[A-Z]+)(?:\\[(?<id>[0-9]+)\\])? (?<message>.*)$");
 
-/// One line, one expected result. The offsets are counted from the subject
-/// string above and are not read back out of the library.
+/// Expected captures and code-unit offsets for one input line.
 const Line = struct {
     subject: []const u8,
-    /// `level/id/message`, with `-` where the optional id did not take part.
+    /// Expected `level/id/message` rendering; `-` marks an unset id.
     rendered: []const u8,
     level: Capture,
     id: ?Capture,
@@ -94,13 +54,7 @@ const Capture = struct {
     end: usize,
 };
 
-// "ERROR[4171] disk full on /dev/sda1", 34 bytes:
-//   0..5  ERROR
-//   5     [
-//   6..10 4171
-//   10    ]
-//   11    space
-//   12..34 "disk full on /dev/sda1", which is 4+1+4+1+2+1+9 = 22 bytes.
+// ASCII input with an id; offsets are code-unit positions.
 const with_id: Line = .{
     .subject = "ERROR[4171] disk full on /dev/sda1",
     .rendered = "ERROR/4171/disk full on /dev/sda1",
@@ -109,12 +63,7 @@ const with_id: Line = .{
     .message = .{ .text = "disk full on /dev/sda1", .start = 12, .end = 34 },
 };
 
-// "WARN disk nearly full", 21 bytes:
-//   0..4  WARN
-//   4     space
-//   5..21 "disk nearly full", which is 4+1+6+1+4 = 16 bytes.
-// The optional id group does not take part, so its offset vector pair stays
-// PCRE2_UNSET and the facade reports no range for it.
+// ASCII input without an id; the optional group is unset.
 const without_id: Line = .{
     .subject = "WARN disk nearly full",
     .rendered = "WARN/-/disk nearly full",
@@ -123,8 +72,7 @@ const without_id: Line = .{
     .message = .{ .text = "disk nearly full", .start = 5, .end = 21 },
 };
 
-/// The compiled pattern, one instance for both lines: a caller that reads a
-/// stream compiles once.
+/// Compile the shared pattern once for both input lines.
 fn compilePattern() !pcre2.Regex {
     return switch (try pcre2.Regex.compile(pattern, .{})) {
         .compiled => |compiled| compiled,
@@ -138,7 +86,6 @@ fn compilePattern() !pcre2.Regex {
     };
 }
 
-/// A runtime-loading build has no provider until one is named.
 const ConfigurationError = error{NoProviderConfigured};
 
 pub fn main(init: std.process.Init) !void {
@@ -148,9 +95,7 @@ pub fn main(init: std.process.Init) !void {
     var stdout = std.Io.File.stdout().writerStreaming(io, &buffer);
     const w = &stdout.interface;
 
-    // In a runtime-loading build every call below goes through a table that this
-    // one call fills. In a linked build the branch is not analysed at all and
-    // nothing is loaded.
+    // Load an explicit provider only for runtime-loaded builds.
     if (comptime pcre2.runtime_loaded) {
         try pcre2.load(.{ .path = try providerRequest(init) });
     }
@@ -164,24 +109,14 @@ pub fn main(init: std.process.Init) !void {
         },
     });
 
-    // Printed, never asserted: which release this binary linked against is a
-    // provenance fact. The buffer is this function's, and what comes back is a
-    // slice of it, so a consumer that copied that shape gets a string it is
-    // still holding at the next line without allocating anything. 64 units is
-    // past the 24 code units every release so far has needed
-    // (`doc/pcre2.txt:1468-1469`); a library that wanted more reports it
-    // rather than having this print a shortened version.
+    // Print the reported version through caller-owned code-unit storage.
     var version_buffer: [64]Unit = undefined;
     const version = pcre2.version(&version_buffer) catch |err| {
         try w.print("the library did not report a version: {s}\n", .{@errorName(err)});
         try w.flush();
         return error.VersionNotReported;
     };
-    // `version` is a slice of this build's code units, and `{s}` writes the
-    // bytes of that memory rather than the characters the code units stand
-    // for: at 16 and 32 bits the line would be the version string with a NUL
-    // after every character. Narrowed to bytes first, the way `smoke.zig`
-    // does it, so all three widths print the same line.
+    // Convert code units to bytes for identical output at every width.
     var version_bytes: [version_buffer.len]u8 = undefined;
     for (version, 0..) |unit, index| version_bytes[index] = @intCast(unit);
     try w.print("pcre2 consumer, linked against {s}\n", .{version_bytes[0..version.len]});
@@ -190,9 +125,7 @@ pub fn main(init: std.process.Init) !void {
     defer regex.deinit();
     try w.print("{d} capturing groups, {d} names\n", .{ regex.captureCount(), regex.nameCount() });
 
-    // The names are reached through `numberForName` rather than written down,
-    // so a pattern whose numbering changed would show up here instead of
-    // quietly reading the wrong group.
+    // Resolve named groups rather than assuming their numbers.
     const level_group = regex.numberForName(wide("level")) orelse return error.NameMissing;
     const id_group = regex.numberForName(wide("id")) orelse return error.NameMissing;
     const message_group = regex.numberForName(wide("message")) orelse return error.NameMissing;
@@ -203,9 +136,6 @@ pub fn main(init: std.process.Init) !void {
     defer context.deinit();
     context.setMatchLimit(1_000_000);
 
-    // `out` holds the assembled line; the other two hold this line's text and
-    // the hand-worked expectations, which are run-time values. 64 units is past
-    // the longest line below (34 code units) and past its longest expectation.
     var out: [128]u8 = undefined;
     var subject_units: [64]Unit = undefined;
     var expect_units: [64]Unit = undefined;
@@ -233,15 +163,11 @@ pub fn main(init: std.process.Init) !void {
         try expect(w, line, "level", try match_data.groupRange(level_group), level, line.level, &expect_units);
         try expect(w, line, "message", try match_data.groupRange(message_group), message, line.message, &expect_units);
 
-        // The optional group. A line with no bracketed id leaves it unset, and
-        // that is a different answer from an empty one, so it is checked as
-        // "no range at all" rather than as a zero-length slice.
+        // An unset optional group has no range; it is not an empty capture.
         const id_range = try match_data.groupRange(id_group);
         if (line.id) |want| {
             const id_text = id orelse return error.IdExpectedButUnset;
             if (id_range == null) return error.IdExpectedButUnset;
-            // The id's own text is checked inside `expect`, in this width's
-            // code units like every other capture here.
             try expect(w, line, "id", id_range, id_text, .{
                 .text = want.text,
                 .start = want.start,
@@ -266,15 +192,8 @@ pub fn main(init: std.process.Init) !void {
     try w.flush();
 }
 
-/// Checks one group's reported range against the offsets this file worked out
-/// by hand, and its capture against the text it worked out by hand.
-///
-/// The capture arrives in this width's code units, so the expectation is
-/// widened into `scratch` the same way. Comparing the capture rather than the
-/// subject's own bytes is what makes this a statement about the library: at
-/// 16 and 32 bits the reported offsets are code-unit offsets, and the subject
-/// is a different string from the one those offsets count into. `scratch` is
-/// reused by the caller between calls and nothing here keeps it.
+/// Check capture text and code-unit offsets against hand-worked expectations.
+/// Uses caller-owned scratch storage and retains no slices.
 fn expect(
     w: *std.Io.Writer,
     line: Line,
@@ -313,13 +232,8 @@ fn expect(
     }
 }
 
-/// Assembles `level/id/message` into the caller's buffer.
-///
-/// The buffer belongs to the caller and nothing is allocated, which is the point
-/// of borrowing captures: the three pieces are already windows on the caller's
-/// own subject, so the only copy here is the one the caller asked for. The
-/// length is checked before anything is written, so a short buffer is an error
-/// rather than a truncated result.
+/// Assemble `level/id/message` into caller-owned output without allocating.
+/// Returns an error if the output slice is too short.
 fn render(
     out: []u8,
     level: []const Unit,
@@ -341,24 +255,16 @@ fn render(
     return out[0..at];
 }
 
-/// Writes one code unit into `out` at `at`, as the byte it stands for.
-///
-/// Every character in this consumer's subjects is ASCII, so a code unit that is
-/// not a byte cannot be one of them and is refused rather than truncated. The
-/// result is written as bytes so it can be printed and compared against the
-/// fixture without a cast that would discard this width's alignment and
-/// element size.
+/// Write one ASCII code unit as a byte.
+/// Return `NonAsciiAssembly` instead of truncating a value above `u8`.
 fn writeByte(out: []u8, at: usize, unit: Unit) error{NonAsciiAssembly}!usize {
     if (unit > std.math.maxInt(u8)) return error.NonAsciiAssembly;
     out[at] = @intCast(unit);
     return 1;
 }
 
-/// The provider this run should load, from `--provider <path>` or from
-/// `PCRE2_TEST_PROVIDER`.
-///
-/// Both are explicit. Nothing here looks in a default location, and a build that
-/// was not told which file to load says so rather than loading something else.
+/// Read the provider path from `--provider <path>` or `PCRE2_TEST_PROVIDER`.
+/// No default lookup or fallback is used.
 fn providerRequest(init: std.process.Init) ConfigurationError![]const u8 {
     const args = init.minimal.args.toSlice(init.arena.allocator()) catch
         return noProvider();
@@ -373,8 +279,6 @@ fn providerRequest(init: std.process.Init) ConfigurationError![]const u8 {
         return noProvider();
 }
 
-/// Say which variable is missing. An error name on its own would send the next
-/// person into the loader instead of to the command line.
 fn noProvider() ConfigurationError {
     std.debug.print(
         "consumer: this is a runtime-loading build. Pass --provider <path>, or " ++

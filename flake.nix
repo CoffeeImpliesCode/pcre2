@@ -3,16 +3,14 @@
 {
   description = "PCRE2 10.49, compiled from this repository's own C sources, with a Zig facade";
 
-  # Fixed rev: a flake whose nixpkgs floats answers a different question each
-  # time it is evaluated. The driver owns `flake.lock`; this is the rev it pins.
+  # Pin nixpkgs to make flake evaluation reproducible.
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/c7def046b9a883d46974757852106483d741586f";
 
   outputs = { self, nixpkgs }:
     let
       inherit (nixpkgs) lib;
 
-      # No `builtins.currentSystem`: a flake evaluation is pure, and the
-      # supported systems are named here.
+      # Enumerate supported systems for pure evaluation.
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -23,12 +21,11 @@
       forEachSystem = f:
         lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
 
-      # One package.nix, three variants. `default` passes no `linkage`, so the
-      # SDK's own policy runs — dynamic on a GNU-libc target, static elsewhere.
+      # Build three variants from one derivation; default keeps its target policy.
       sdk = pkgs: args:
         pkgs.callPackage ./package.nix ({ zig = pkgs.zig_0_16; } // args);
 
-      # The same tool list devenv uses, read rather than restated.
+      # Reuse devenv's development tool list.
       devEnv = pkgs: pkgs.callPackage ./devenv.nix { };
     in
     {
@@ -38,8 +35,7 @@
         shared = sdk pkgs { linkage = "dynamic"; };
       });
 
-      # Tools only. Building the SDK is what `nix build` is for, and devenv is
-      # the canonical development environment for it.
+      # Keep shell tools separate from the SDK package build.
       devShells = forEachSystem (pkgs: {
         default = pkgs.mkShell {
           name = "pcre2-sdk";

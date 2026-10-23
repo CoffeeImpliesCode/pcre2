@@ -1,44 +1,6 @@
-//! Behavioural tests for the PCRE2 facade.
-//!
-//! The expectations live in `testdata/foundation-fixtures.zig` and came out of
-//! this repository's own `testdata/`, which is upstream's `pcre2test` input and
-//! expected output for release 10.49, or were worked out by hand from the C and
-//! say so. Nothing here was produced by running this fork, so a passing test is
-//! PCRE2 agreeing with itself, not this binding agreeing with itself.
-//!
-//! ## Every width, not one
-//!
-//! `pcre2.h` publishes three libraries through one header and this build
-//! compiles one of them, so a test that only ever spoke bytes would be a test of
-//! the 8-bit library wearing the name of a test of PCRE2. Two helpers at the top
-//! move a fixture's byte data into the compiled width's code units and back:
-//!
-//!   * a case marked `utf_bytes` is **decoded** from UTF-8, because its code
-//!     points are what the pattern means, and its captures are compared after
-//!     being re-encoded, so the same answer is checked in the terms each width
-//!     uses;
-//!   * every other case is **widened** one byte per code unit, which is exact
-//!     for a pattern of ASCII literals and is what a byte-oriented expected
-//!     output means at every width.
-//!
-//! Two cases are marked `eight_bit_only`, and both are kept rather than
-//! loosened: they pin the 8-bit validator's own error numbers, which a 16- or
-//! 32-bit library does not share. The statement all three widths do share is
-//! checked separately, from `fixtures.malformed_units`, rather than by making
-//! those two cases conditional on nothing.
-//!
-//! ## What is checked
-//!
-//! The known answers; the bounds the facade owns itself, which upstream would
-//! answer differently or not at all; the lifetime of a capture, which is a
-//! window on the caller's own buffer rather than a copy of it; and the parts of
-//! the surface that only exist to own something -- the allocator, the JIT
-//! refusal, substitution, the DFA matcher, serialization and the POSIX wrapper.
-//! Those are behavioural because they are observable from outside: what was
-//! called, what came back, and who released it.
-//!
-//! Nothing here compares a facade accessor with `pcre2.c`. Agreement between a
-//! wrapper and the member it wraps is not evidence about PCRE2.
+//! Behavioural tests for the typed PCRE2 facade.
+//! Fixtures and expected output come from upstream `pcre2test` data.
+//! Helpers encode text per width and check observable behavior.
 
 const std = @import("std");
 const pcre2 = @import("pcre2");
@@ -67,15 +29,7 @@ const malformed_index: usize = switch (pcre2.compiled_width) {
     .@"32" => 2,
 };
 
-// ---------------------------------------------------------------------------
-// Moving a fixture's bytes into this width's code units
-// ---------------------------------------------------------------------------
-
-/// Widen `bytes` into `out`, one byte per code unit.
-///
-/// Exact for a pattern of ASCII literals, which is what every non-`utf_bytes`
-/// fixture is. A byte above what the width's code unit can hold is a caller
-/// mistake rather than something to truncate silently, so it is refused.
+/// Copies ASCII bytes into caller storage, one code unit per byte.
 fn widen(ascii: []const u8, out: []Unit) ![]const Unit {
     if (out.len < ascii.len) return error.BenchmarkWorkspaceTooSmall;
     for (ascii, 0..) |byte, i| {
@@ -85,8 +39,7 @@ fn widen(ascii: []const u8, out: []Unit) ![]const Unit {
     return out[0..ascii.len];
 }
 
-/// Preserve UTF-8 bytes at width 8. Decode code points for width 32, or
-/// encode them as UTF-16 code units for width 16.
+/// Decodes UTF-8 to the selected width; width 8 preserves bytes.
 fn widenUtf8(bytes: []const u8, out: []Unit) ![]const Unit {
     if (Unit == u8) {
         if (bytes.len > out.len) return error.BenchmarkWorkspaceTooSmall;
@@ -129,11 +82,8 @@ fn subjectOf(case: fixtures.Case, scratch: []Unit) ![]const Unit {
         widen(case.subject, scratch);
 }
 
-/// A capture as the bytes the fixture wrote down.
-///
-/// `utf` selects re-encoding over narrowing, and a code unit that is not a byte
-/// is refused rather than dropped, so a mismatch here is a real difference and
-/// not a truncation.
+/// Renders code units as fixture bytes, re-encoding UTF when requested.
+/// Refuses unrepresentable units instead of truncating.
 fn render(out: []u8, units: []const Unit, utf: bool) ![]const u8 {
     if (!utf or Unit == u8) {
         if (out.len < units.len) return error.BenchmarkWorkspaceTooSmall;
@@ -162,11 +112,7 @@ fn render(out: []u8, units: []const Unit, utf: bool) ![]const u8 {
     return out[0..at];
 }
 
-/// Compiles a pattern the test expects PCRE2 to accept.
-///
-/// The union is unwrapped through a switch rather than by naming the field,
-/// so a pattern that unexpectedly does not compile reports the diagnostic
-/// upstream gave instead of tripping a union-tag safety panic.
+/// Unwraps expected compile success and reports unexpected rejection as a test error.
 fn mustCompile(pattern: []const Unit, options: pcre2.CompileOptions) !pcre2.Regex {
     return switch (try pcre2.Regex.compile(pattern, options)) {
         .compiled => |regex| regex,
@@ -181,17 +127,11 @@ fn mustCompile(pattern: []const Unit, options: pcre2.CompileOptions) !pcre2.Rege
     };
 }
 
-// ---------------------------------------------------------------------------
-// The known answers
-// ---------------------------------------------------------------------------
-
 test "every known answer in the fixture table holds" {
     nativeReady();
     var pattern_units: [512]Unit = undefined;
     var subject_units: [512]Unit = undefined;
-    // The names are widened into a buffer of their own rather than into
-    // `subject_units`: `subject` below is a window into that one, and the match
-    // this loop goes on to make is run against it.
+    // Keep name input separate from the subject buffer.
     var name_workspace: [pcre2.max_name_length]Unit = undefined;
     var rendered: [1024]u8 = undefined;
 
@@ -217,8 +157,7 @@ test "every known answer in the fixture table holds" {
                         return error.FixtureMismatch;
                     },
                 };
-                // The three things a caller needs in order to point a user at
-                // the offending code unit of the pattern.
+                // Compare the diagnostic code and pattern offset.
                 try std.testing.expectEqual(expected.code, rejection.code);
                 try std.testing.expectEqual(expected.offset, rejection.offset);
                 continue;
@@ -229,17 +168,12 @@ test "every known answer in the fixture table holds" {
         if (case.capture_count) |expected| {
             try std.testing.expectEqual(expected, compiled.captureCount());
         }
-        // Every fixture that declares names declares all of them, so the count
-        // is a real comparison rather than a tautology.
+        // Compare every name declared by the fixture.
         try std.testing.expectEqual(@as(u32, @intCast(case.names.len)), compiled.nameCount());
         for (case.names, 0..) |named, i| {
             const entry = compiled.nameAt(@intCast(i)) orelse return error.FixtureMismatch;
             try std.testing.expectEqual(named.number, entry.number);
-            // A name is code units of this width, not bytes
-            // (`src/pcre2_compile_cgroup.c:168`), so both directions are
-            // converted rather than compared as text: the table's own units
-            // narrow to the fixture's bytes, and the fixture's bytes widen
-            // back for the lookups.
+            // Names use this width's code units; convert both sides before comparing.
             try std.testing.expectEqualStrings(
                 named.name,
                 try render(&rendered, entry.name, false),
@@ -258,8 +192,7 @@ test "every known answer in the fixture table holds" {
 
         var match_data = try pcre2.MatchData.create(&compiled);
         defer match_data.deinit();
-        // The block covers group 0 through the pattern's highest group, which
-        // is what makes `groupRange` a bounds check and not a guess.
+        // Capacity covers group 0 and all capturing groups.
         try std.testing.expectEqual(compiled.captureCount() + 1, match_data.captureCount());
 
         var context = try pcre2.MatchContext.init();
@@ -296,17 +229,10 @@ fn expectAnswer(
                 .matched => |want| want,
                 else => return mismatch(case, "matched", @tagName(expected)),
             };
-            // The listed groups must run 0, 1, 2 ... with no gap, because a
-            // group dropped from the middle of a fixture is a fixture that
-            // stopped checking something. They need not reach the pattern's
-            // highest group: upstream's heap-limit case
-            // "testdata/testoutput6:7739" pins group 0 only, and the nested
-            // captures a recursive pattern leaves behind are not something a
-            // reader can confirm by looking at the expected output.
+            // Fixture groups must be contiguous from group 0; trailing groups may be omitted.
             for (captures, 0..) |want, i| {
                 try std.testing.expectEqual(@as(u32, @intCast(i)), want.number);
-                // A listed group that the pattern does not have would make
-                // the loop below check an offset the block never wrote.
+                // Ensure each fixture group exists in the compiled pattern.
                 try std.testing.expect(want.number <= regex.captureCount());
                 const range = try match_data.groupRange(want.number);
                 const text = try match_data.group(want.number);
@@ -350,9 +276,7 @@ fn expectAnswer(
             };
             try std.testing.expectEqual(want.code, got.code);
             try std.testing.expectEqualStrings(want.text, try render(rendered, got.text.slice(), case.utf_bytes));
-            // Only the validity failures that went through pcre2_valid_utf
-            // write the offending offset; the two early returns at
-            // pcre2_match.c:7270-7279 do not, and the fixture says so.
+            // Only UTF validator failures report the offending code unit.
             if (want.bad_offset) |offset| {
                 try std.testing.expectEqual(offset, match_data.startOffset());
             }
@@ -381,10 +305,7 @@ fn mismatch(
 
 test "a subject this width's validator cannot read is a validity failure" {
     nativeReady();
-    // One code unit per width that the width's own UTF validator refuses, so
-    // the assertion is about the validator refusing and not about any one
-    // width's numbering of it. The 8-bit numbers are upstream's, and are pinned
-    // by the two fixture cases marked `eight_bit_only`.
+    // Each width uses its own malformed code unit and error number.
     var units: [4]Unit = undefined;
     const wanted = fixtures.malformed_units[malformed_index];
     for (wanted, 0..) |value, i| {
@@ -405,10 +326,6 @@ test "a subject this width's validator cannot read is a validity failure" {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Bounds the facade owns
-// ---------------------------------------------------------------------------
-
 test "a start offset past the end of the subject is refused before matching" {
     nativeReady();
     var regex = try mustCompile(widenLiteral("abc"), .{});
@@ -416,15 +333,12 @@ test "a start offset past the end of the subject is refused before matching" {
     var match_data = try pcre2.MatchData.create(&regex);
     defer match_data.deinit();
 
-    // One past the end of a three unit subject. PCRE2 answers this itself with
-    // PCRE2_ERROR_BADOFFSET, from inside the matcher; the facade names the
-    // condition instead, so a caller can act on it before spending a match.
+    // The facade names the out-of-range offset before PCRE2 reports BADOFFSET.
     try std.testing.expectError(
         error.StartOffsetOutOfRange,
         regex.match(widenLiteral("abc"), 4, .{}, &match_data, null),
     );
-    // Exactly the end of the subject is in range, and a pattern that needs
-    // three units simply does not match there.
+    // Subject end is a valid offset; this pattern simply cannot match there.
     switch (try regex.match(widenLiteral("abc"), 3, .{}, &match_data, null)) {
         .no_match => {},
         else => return error.FixtureMismatch,
@@ -444,24 +358,20 @@ test "a group number past the block's capture count is refused" {
         .matched => {},
         else => return error.FixtureMismatch,
     }
-    // Group 3 does not exist. Reading it would be past the end of PCRE2's
-    // offset vector, so the facade says so instead of indexing.
+    // Group 3 is outside the offset vector.
     try std.testing.expectError(error.NoSuchGroup, match_data.groupRange(3));
     try std.testing.expectError(error.NoSuchGroup, match_data.group(3));
 }
 
 test "a block too small for the regex is refused, and its earlier captures go with it" {
     nativeReady();
-    // One block, two patterns, and the second one needs more offset-vector
-    // pairs than the first. `MatchData.create` sized this block for `small`,
-    // and nothing about the block remembers which pattern that was.
+    // This block was sized for `small` and does not remember its pattern.
     var small = try mustCompile(widenLiteral("abc"), .{});
     defer small.deinit();
     var match_data = try pcre2.MatchData.create(&small);
     defer match_data.deinit();
 
-    // The state a caller can read before the refusal, so that "nothing is
-    // readable afterwards" is a change and not a property of an empty block.
+    // Verify the previous match is readable before testing the refusal.
     try std.testing.expectEqual(@as(u32, 0), small.captureCount());
     try std.testing.expectEqual(@as(u32, 1), match_data.captureCount());
     switch (try small.match(widenLiteral("abc"), 0, .{}, &match_data, null)) {
@@ -477,31 +387,20 @@ test "a block too small for the regex is refused, and its earlier captures go wi
     defer larger.deinit();
     try std.testing.expectEqual(@as(u32, 3), larger.captureCount());
 
-    // Upstream's own answer to this is a return of zero: it fills what fits
-    // and reports that the vector was too small
-    // (`doc/html/pcre2api.html:3308-3312`). The facade refuses before matching,
-    // so the caller learns that its block and its pattern do not belong
-    // together rather than receiving a match it cannot read.
+    // PCRE2 would return a truncated zero; the facade rejects the undersized block first.
     try std.testing.expectError(
         error.OvectorTooSmall,
         larger.match(widenLiteral("abc"), 0, .{}, &match_data, null),
     );
 
-    // The refusal is not a pause. PCRE2 leaves the offset vector of the last
-    // match in place across every path that did not match
-    // (`doc/html/pcre2api.html:3330-3334`), so the "abc" offsets from above are
-    // still in the block and describe a subject this attempt never ran
-    // against. The block reports nothing rather than handing them back.
+    // A refusal clears match state although PCRE2 leaves the previous offsets in place.
     try std.testing.expect(!match_data.matched);
     try std.testing.expect((try match_data.groupRange(0)) == null);
     try std.testing.expect((try match_data.group(0)) == null);
-    // The group-number bound is a statement about the index and holds whatever
-    // the block last did: group 1 is past this block's own count, so it is
-    // `NoSuchGroup` rather than an unreadable range.
+    // Group bounds do not depend on the block's match state.
     try std.testing.expectError(error.NoSuchGroup, match_data.groupRange(1));
 
-    // A pattern the block does fit re-arms it, and the captures are that
-    // subject's own.
+    // A pattern that fits can reuse the block.
     switch (try small.match(widenLiteral("abc"), 0, .{}, &match_data, null)) {
         .matched => {},
         else => return error.FixtureMismatch,
@@ -514,12 +413,7 @@ test "a block too small for the regex is refused, and its earlier captures go wi
 
 test "releasing an owned block hands the memory back once" {
     nativeReady();
-    // One owner, one release, and a second release that must be the same no-op
-    // rather than a second free. What is checked is the transition: after the
-    // first `deinit` the handle is null, and the second call leaves it null
-    // without the program faulting. A test that only asked whether the field
-    // was non-null before the call would prove that an allocation happened, not
-    // that releasing it twice is safe.
+    // Verify that releasing the owned contexts twice is safe and leaves them cleared.
     var regex = try mustCompile(widenLiteral("(a)"), .{});
     var match_data = try pcre2.MatchData.create(&regex);
     var context = try pcre2.MatchContext.init();
@@ -544,17 +438,11 @@ test "a name the pattern did not declare, and a name too long to declare, are bo
     var regex = try mustCompile(widenLiteral("(?<abc>x)(?'xyz'y)"), .{});
     defer regex.deinit();
 
-    // Upstream keeps the table in name order (`pcre2_compile_cgroup.c:106-108`),
-    // and "abc" sorts before "xyz" here, so entry 1 is the last one and index 2
-    // is past the end. The pattern also happens to write its two names in that
-    // order, which is why this pattern cannot tell name order apart from the
-    // order they were written in; the test below is the one that does.
+    // PCRE2 sorts the name table, not by the order names appear in the pattern.
     try std.testing.expectEqual(@as(u32, 2), regex.nameCount());
     const last = regex.nameAt(1) orelse return error.FixtureMismatch;
     try std.testing.expectEqual(@as(u32, 2), last.number);
-    // Names come back in this width's code units
-    // (`src/pcre2_compile_cgroup.c:168`), so they are compared in units
-    // rather than as bytes.
+    // Names use the selected width's code units.
     try std.testing.expectEqualSlices(
         Unit,
         widenLiteral("xyz"),
@@ -569,39 +457,19 @@ test "a name the pattern did not declare, and a name too long to declare, are bo
     );
     if (regex.numberForName(widenLiteral("nope")) != null) return error.FixtureMismatch;
 
-    // pcre2_compile.c:2671 refuses a group name longer than MAX_NAME_SIZE, so
-    // no pattern this fork accepted can have a name of this length and the
-    // lookup must not go looking for one.
+    // PCRE2 rejects names longer than `MAX_NAME_SIZE`.
     var too_long: [pcre2.max_name_length + 1]Unit = @splat('a');
     if (regex.numberForName(&too_long) != null) return error.FixtureMismatch;
 }
 
 test "the name table is walked in name order, and an entry ends at its own NUL" {
     nativeReady();
-    // Four names written in an order that is neither ascending by group
-    // number nor sorted by name, two of them sharing a prefix and two of them
-    // far shorter than the longest. Everything a walker of this table can get
-    // wrong is reachable from this one pattern: the order of the entries, the
-    // group number decoded out of each one, and where a name stops and the
-    // next entry begins.
-    //
-    // The order is PCRE2's and not this file's. Names are inserted where they
-    // belong alphabetically (`pcre2_compile_cgroup.c:106-108`, `:140-161`), a
-    // name that is a prefix of another sorts before it (`:142-144`), and the
-    // longest name in the pattern sizes every entry
-    // (`pcre2_compile.c:5713-5716`). Group numbers are handed out in the order
-    // the groups appear (`pcre2_compile.c:5701-5702`), so the table reads
-    // 4, 3, 2, 1 rather than 1, 2, 3, 4.
+    // Names sort alphabetically while group numbers follow pattern order.
+    // Prefix names and padding exercise the table decoder.
     var regex = try mustCompile(widenLiteral("(?<zebra>1)(?<m>2)(?<alpha>3)(?<al>4)"), .{});
     defer regex.deinit();
 
-    // The names below are runtime values, so they are widened through a
-    // buffer; `widenLiteral` is the comptime form for the literals this file
-    // writes inline. The expected names are kept as the bytes they are
-    // written as here and converted on both sides of each comparison, because
-    // the table this walks holds code units of the compiled width
-    // (`src/pcre2_compile_cgroup.c:168`) and a `[]const u8` is not a
-    // `[]const u16`.
+    // Convert runtime name-table code units to and from fixture bytes.
     var name_workspace: [pcre2.max_name_length]Unit = undefined;
     var rendered: [pcre2.max_name_length]u8 = undefined;
 
@@ -616,10 +484,7 @@ test "the name table is walked in name order, and an entry ends at its own NUL" 
     for (expected, 0..) |want, i| {
         const entry = regex.nameAt(@intCast(i)) orelse return error.FixtureMismatch;
         try std.testing.expectEqual(want.number, entry.number);
-        // Three of these four names are shorter than the longest one, so their
-        // entries carry zero padding behind the NUL. Comparing the whole slice
-        // is what catches a name that ran to the end of its entry instead of
-        // stopping at that NUL.
+        // Full-slice comparison catches names that run past NUL into padding.
         try std.testing.expectEqualStrings(
             want.name,
             try render(&rendered, entry.name, false),
@@ -640,43 +505,26 @@ test "the name table is walked in name order, and an entry ends at its own NUL" 
 
 test "the version answer is the caller's own buffer, and a short one is refused" {
     nativeReady();
-    // A guard unit, not a version: nothing below can be satisfied by a value
-    // this file put in the buffer itself. 64 units is past the 24 code units
-    // every release so far has needed (`doc/pcre2.txt:1468-1469`); what the
-    // library actually asks for is what the rest of this test works from.
+    // Use a guard-filled buffer to check the returned slice and writes.
     var buffer: [64]Unit = @splat(0xaa);
     const reported = try pcre2.version(&buffer);
 
-    // Where the units live is the property under test. A facade that filled its
-    // own frame and returned a slice of that frame would hand back the right
-    // string and leave this comparison pointing into a frame that has already
-    // been reused for something else.
+    // Confirm the returned slice points into the caller's buffer.
     try std.testing.expectEqual(@intFromPtr(&buffer[0]), @intFromPtr(reported.ptr));
-    // The slice ends on a terminator the copy actually wrote, so the sentinel
-    // in its type is a fact about the buffer rather than a claim about a unit
-    // nobody checked.
+    // Confirm the returned slice includes a real NUL terminator.
     try std.testing.expectEqual(@as(Unit, 0), buffer[reported.len]);
-    // Nothing was written past it either: a unit beyond the terminator is still
-    // the guard, which a copy that ran on would have replaced.
+    // The sentinel after NUL must remain untouched.
     if (reported.len + 1 < buffer.len) {
         try std.testing.expectEqual(@as(Unit, 0xaa), buffer[reported.len + 1]);
     }
 
-    // One unit less than the library asked for, which is short by exactly the
-    // terminator. A capacity check that forgot to count it would let this call
-    // through and hand back a string with no room for its own zero.
+    // One code unit short of required capacity, including the terminator.
     var short_buffer: [64]Unit = @splat(0xaa);
     const too_short = short_buffer[0..reported.len];
     try std.testing.expectError(error.VersionBufferTooSmall, pcre2.version(too_short));
-    // And the refusal is before the call that writes, not after it: not one
-    // unit of the caller's storage changed. A short buffer written and then
-    // reported would leave the version string in the first units here.
+    // A rejected short buffer must remain unchanged.
     for (too_short) |unit| try std.testing.expectEqual(@as(Unit, 0xaa), unit);
 }
-
-// ---------------------------------------------------------------------------
-// Ownership
-// ---------------------------------------------------------------------------
 
 test "a capture is a window on the caller's subject, not a copy of it" {
     nativeReady();
@@ -696,9 +544,7 @@ test "a capture is a window on the caller's subject, not a copy of it" {
     try std.testing.expectEqual(@as(usize, 1), range.start);
     try std.testing.expectEqual(@as(usize, 2), range.end);
 
-    // Writing through the caller's own buffer is visible through the capture.
-    // A binding that had copied the substring out would still be holding "b"
-    // here, so this fails on a copy and passes only on a borrow.
+    // Mutation through the caller's subject must be visible through the capture.
     subject[1] = 'B';
     try std.testing.expectEqualSlices(Unit, widenLiteral("B"), captured);
     try std.testing.expectEqual(@as(usize, 3), match_data.subject.len);
@@ -724,27 +570,18 @@ test "an attempt that did not match leaves nothing readable, whatever the last o
     try std.testing.expectEqual(@as(usize, 4), found.start);
     try std.testing.expectEqual(@as(usize, 7), found.end);
 
-    // The same block, reused over a one unit subject the pattern cannot match.
-    // PCRE2 writes the offset vector only on the path that matched
-    // (`src/pcre2_match.c:1045-1053`); the non-match path returns through
-    // `src/pcre2_match.c:8214-8220` having set only the subject, its length,
-    // the start offset and the return code. Group 2 therefore still holds
-    // 4..7 from the subject above, and those offsets are past the end of this
-    // one: reading them is an out-of-bounds read.
+    // PCRE2 leaves old offsets after a non-match; the facade must hide them.
     switch (try regex.match(widenLiteral("z"), 0, .{}, &match_data, null)) {
         .no_match => {},
         else => return error.FixtureMismatch,
     }
     try std.testing.expect((try match_data.groupRange(2)) == null);
     try std.testing.expect((try match_data.group(2)) == null);
-    // The whole match is no more readable than a capture, and the group-number
-    // bound still comes first: it is a statement about the index, not about
-    // the match.
+    // No match clears captures, but invalid group numbers still error.
     try std.testing.expect((try match_data.groupRange(0)) == null);
     try std.testing.expectError(error.NoSuchGroup, match_data.groupRange(3));
 
-    // A further match re-arms the block, and the captures are then that
-    // subject's own: "q" is unit 2 of "7-q", not units 4..7 of anything.
+    // A later match re-arms the block with offsets for its own subject.
     switch (try regex.match(widenLiteral("7-q"), 0, .{}, &match_data, null)) {
         .matched => {},
         else => return error.FixtureMismatch,
@@ -782,10 +619,7 @@ test "a group the pattern skipped reports no range, and one that took part repor
         .matched => {},
         else => return error.FixtureMismatch,
     }
-    // PCRE2 leaves PCRE2_UNSET in the offset vector for the alternative the
-    // pattern did not take (`src/pcre2_match.c:1036-1037` and `:1053`), and a
-    // group that did not take part is reported as having no range rather than
-    // as a zero-length one. "b" is the one unit at 0..1.
+    // Unset groups have no range rather than an empty capture.
     try std.testing.expect((try match_data.groupRange(1)) == null);
     try std.testing.expect((try match_data.group(1)) == null);
     const second = (try match_data.groupRange(2)) orelse return error.FixtureMismatch;
@@ -800,8 +634,7 @@ test "a group the pattern skipped reports no range, and one that took part repor
 
 test "a capture is copied out of the block, and the caller says where the copy lands" {
     nativeReady();
-    // Two alternatives, so one of them does not take part and can be asked
-    // about separately from the one that did.
+    // One alternative matches; the other remains unset.
     var regex = try mustCompile(widenLiteral("(\\d+)|(x)"), .{});
     defer regex.deinit();
     var match_data = try pcre2.MatchData.create(&regex);
@@ -812,48 +645,28 @@ test "a capture is copied out of the block, and the caller says where the copy l
         else => return error.FixtureMismatch,
     }
 
-    // `pcre2_substring_get_bynumber_N` is the route that allocates: the copy
-    // is a block of its own, made with the match block's allocator
-    // (`src/pcre2_substring.c:213-216`) and released by the caller through
-    // `pcre2_substring_free_N` (`:237-245`), so it is the caller who owns it
-    // and not the block. What it copies is the group, resolved against the
-    // block's own subject -- which is the caller's own subject here, because
-    // PCRE2 borrows that rather than keeping a copy of it
-    // (`src/pcre2_match.c:8179`).
+    // `get` returns a PCRE2-owned capture copy; release it with `Owned.deinit`.
     var owned = try match_data.get(1);
     defer owned.deinit();
     try std.testing.expectEqualSlices(Unit, widenLiteral("12345"), owned.slice());
 
-    // `pcre2_substring_copy_bynumber_N` is the other one
-    // (`src/pcre2_substring.c:116-130`): it writes into storage the caller
-    // already has and allocates nothing, so there is nothing to release
-    // afterwards and nothing that can be forgotten. It appends the terminator
-    // (`:127`), so a buffer for five units of text is six.
+    // `copy` writes into caller storage and includes a NUL terminator.
     var buffer: [6]Unit = @splat(0xaa);
     const written = try match_data.copy(1, &buffer);
     try std.testing.expectEqual(@as(usize, 5), written);
     try std.testing.expectEqualSlices(Unit, widenLiteral("12345"), buffer[0..written]);
     try std.testing.expectEqual(@as(Unit, 0), buffer[written]);
 
-    // One unit too few is the check upstream makes first: `size + 1 > *sizeptr`
-    // answers -48, `PCRE2_ERROR_NOMEMORY` (`src/pcre2_substring.c:124`), so the
-    // refusal arrives before the copy rather than after it, and a truncated
-    // capture is not something a caller has to notice on its own.
+    // An undersized output is refused before the buffer changes.
     var short: [5]Unit = @splat(0xaa);
     try std.testing.expectError(error.SubstringBufferTooSmall, match_data.copy(1, &short));
     for (short) |unit| try std.testing.expectEqual(@as(Unit, 0xaa), unit);
 
-    // The alternative that did not take part is not a capture, and saying so
-    // is a different answer from handing back an empty one: PCRE2 leaves
-    // `PCRE2_UNSET` in both ends of it and reports that as an error
-    // (`src/pcre2_substring.c:331-332`).
+    // Unset captures return `SubstringUnavailable` from copy APIs.
     try std.testing.expectError(error.SubstringUnavailable, match_data.get(2));
     try std.testing.expectError(error.SubstringUnavailable, match_data.copy(2, &short));
 
-    // `copy_matched_subject` changes where the same call reads from and not
-    // whether it answers: the block holds a copy of its own, and group 1 comes
-    // back with the same text out of it (`src/pcre2_match.c:8165-8178`). The
-    // copy is still the caller's to release.
+    // `copy_matched_subject` preserves the same capture from PCRE2's owned subject.
     var other = try pcre2.MatchData.create(&regex);
     defer other.deinit();
     switch (try regex.match(
@@ -882,29 +695,19 @@ test "every capture of an attempt comes back as one list the caller owns" {
         .matched => {},
         else => return error.FixtureMismatch,
     }
-    // Three capturing groups plus group 0, which is what `captureCount` counts.
+    // `captureCount` includes group 0.
     const count = match_data.captureCount();
     try std.testing.expectEqual(@as(u32, 4), count);
 
-    // One call, one block: `pcre2_substring_list_get_N` writes one
-    // `PCRE2_UCHAR **` and one `PCRE2_SIZE *` of its own
-    // (`src/pcre2_substring.c:404-437`) rather than a pair per group into two
-    // arrays the caller had to provide and size, and the caller releases the
-    // whole block in one call (`:451-459`).
+    // PCRE2 returns the whole capture list in one owned block.
     var list = try match_data.list();
     defer list.deinit();
 
-    // How many the list carries is what the attempt reported, not how many the
-    // block could have held, so it is the list's own count that bounds `get`.
-    // All three groups took part here, which is what makes the two the same
-    // number rather than the list being short.
+    // The list count bounds its captures, not the block capacity.
     try std.testing.expectEqual(count, list.count);
 
     const expected = [_][]const u8{ "abc", "a", "b", "c" };
-    // `want` comes out of a run-time loop, so it is widened through a buffer
-    // the way the name table above is; `widenLiteral` is the comptime form for
-    // the literals this file writes inline. Three units is the longest entry
-    // here, so a fourth would be refused rather than quietly truncated.
+    // Widen runtime names into a workspace sized for the longest expected capture.
     var text_workspace: [3]Unit = undefined;
     for (expected, 0..) |want, i| {
         const got = list.get(@intCast(i)) orelse return error.FixtureMismatch;
@@ -913,12 +716,7 @@ test "every capture of an attempt comes back as one list the caller owns" {
     if (list.get(count) != null) return error.FixtureMismatch;
 }
 
-// ---------------------------------------------------------------------------
-// Contexts, the allocator, and the entry points that own nothing
-// ---------------------------------------------------------------------------
-
-/// One block this pair handed out, remembered so the free side can hand back
-/// that block rather than a slice that only names its address.
+/// One allocator-owned block, with its size for release.
 const LiveBlock = struct {
     address: [*]u8,
     size: usize,
@@ -928,37 +726,24 @@ const Counter = struct {
     allocations: usize = 0,
     frees: usize = 0,
     bytes: usize = 0,
-    /// Every block that has been handed out and not yet handed back.
-    ///
-    /// The free side of a C allocator pair is given the pointer and nothing
-    /// else (`runtime/library.zig`'s `GeneralContext.create` says the same
-    /// thing), so the size that goes with an address is the only way to
-    /// release the block itself. A block this pair was never asked for is
-    /// **counted**, not dropped, so a free arriving for an address that is
-    /// not in here cannot make a leak check pass by being ignored; the same
-    /// goes for a block handed out with the table full.
+    /// Outstanding blocks, retained so frees can use their original sizes.
     live: [16]?LiveBlock = @splat(null),
-    /// Frees of blocks this pair did not hand out. Must be zero at the end.
+    /// Frees for pointers this pair did not allocate.
     unknown_frees: usize = 0,
-    /// Allocations this pair could not record. Must be zero at the end.
+    /// Allocations that could not be recorded.
     unrecorded: usize = 0,
 };
 
 fn countingAllocate(size: usize, data: ?*anyopaque) callconv(.c) ?*anyopaque {
     const counter: *Counter = @ptrCast(@alignCast(data.?));
-    // A page allocator is used because it is the one allocator a free can be
-    // handed a pointer for: `std.heap.page_allocator.free` takes a slice and
-    // ignores the length, so the length this function is given is free to be
-    // the block's own.
+    // Page allocator frees without needing the allocation length.
     const memory = std.heap.page_allocator.alloc(u8, size) catch return null;
     counter.allocations += 1;
     counter.bytes += size;
     if (counter.allocations <= counter.live.len) {
         counter.live[counter.allocations - 1] = .{ .address = memory.ptr, .size = size };
     } else {
-        // Recorded as a failure rather than dropped: the free for this block
-        // would find nothing to match and be counted as unknown, which is
-        // what should happen if the table is ever too small.
+        // Keep untracked allocations visible to the leak check.
         counter.unrecorded += 1;
     }
     return @ptrCast(memory.ptr);
@@ -967,10 +752,7 @@ fn countingAllocate(size: usize, data: ?*anyopaque) callconv(.c) ?*anyopaque {
 fn countingDeallocate(memory: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
     const counter: *Counter = @ptrCast(@alignCast(data.?));
     const address: [*]u8 = @ptrCast(memory orelse return);
-    // A block this pair was not asked for is not one this pair releases, so a
-    // pointer it cannot match against what it handed out is not freed at a
-    // length this pair made up -- but it is counted, because dropping it
-    // silently is what would let an ownership bug pass as a clean run.
+    // Count unknown pointers rather than freeing memory this pair does not own.
     for (&counter.live) |*slot| {
         const block = slot.* orelse continue;
         if (block.address != address) continue;
@@ -982,14 +764,7 @@ fn countingDeallocate(memory: ?*anyopaque, data: ?*anyopaque) callconv(.c) void 
     counter.unknown_frees += 1;
 }
 
-/// Whether this pair handed out a block that begins at `block`.
-///
-/// Read out of `live` before the frees rather than after, because the count
-/// lines that follow cannot tell a block this pair made from one it did not:
-/// the contexts and the character tables raise `allocations` whatever a caller
-/// does, so a conservation check on its own is satisfied by a decoder that used
-/// upstream's default allocator throughout. Asking for each block's address is
-/// the claim that is actually about ownership.
+/// Checks whether this allocator pair owns `block`.
 fn isLive(counter: *const Counter, block: *pcre2.Surface.Types.Code) bool {
     const address: [*]u8 = @ptrCast(block);
     for (counter.live) |slot| {
@@ -1026,43 +801,26 @@ test "a caller's own allocator is used for the blocks it was given to, and every
         else => return error.FixtureMismatch,
     }
 
-    // Before anything is released, the caller's allocator is the one that has
-    // been asked for memory and nothing has been handed back. **How many**
-    // blocks that is not asserted: a context-driven compile is free to make
-    // one block or several (`src/pcre2_context.c:117`, `:150` are two of
-    // them), and pinning the number would pin PCRE2's internal allocation
-    // strategy rather than anything a caller can rely on. What is asserted is
-    // that the memory came from this pair at all, and that it was remembered
-    // well enough to be released again.
+    // Allocation counts vary; check ownership and conservation instead.
     try std.testing.expect(counter.allocations > 0);
     try std.testing.expect(counter.bytes > 0);
     try std.testing.expectEqual(@as(usize, 0), counter.unrecorded);
     try std.testing.expectEqual(@as(usize, 0), counter.frees);
 
-    // The block matched for real, so the pattern is exercised rather than only
-    // allocated: a capture read out of the block this allocator produced is
-    // the answer the pattern means.
+    // Read a capture from the block produced by this allocator.
     try std.testing.expectEqualSlices(
         Unit,
         widenLiteral("b"),
         (try match_data.group(2)) orelse return error.FixtureMismatch,
     );
 
-    // Each block carries its own allocator record, so releasing these goes
-    // through the caller's pair and not through upstream's `free`. The
-    // contexts are released too, because they were allocated through the same
-    // pair and a run that leaves them outstanding would report a leak the
-    // caller cannot see.
+    // Release every block through the caller's allocator pair.
     compiled.deinit();
     match_data.deinit();
     compile_context.deinit();
     general.deinit();
 
-    // Every block handed out came back, none came back that was never handed
-    // out, and none was handed out that could not be tracked: a pair that
-    // dropped what it could not match would satisfy "frees == allocations"
-    // without ever having released anything, which is why the two counters
-    // above exist.
+    // Every allocation must be tracked and released once; unknown counts stay zero.
     try std.testing.expect(counter.allocations > 0);
     try std.testing.expectEqual(counter.allocations, counter.frees);
     try std.testing.expectEqual(@as(usize, 0), counter.unknown_frees);
@@ -1071,18 +829,8 @@ test "a caller's own allocator is used for the blocks it was given to, and every
 
 test "the newline convention the compile context sets changes what `$` accepts" {
     nativeReady();
-    // `PCRE2_NEWLINE_LF` and `PCRE2_NEWLINE_CRLF` are two different answers to
-    // the same question (`src/pcre2.h.generic:213-218`), and the difference is
-    // observable: under CRLF a bare LF is not a line terminator, so `a$` does
-    // not match "a\n". That is the setting doing the work, not a constant
-    // being read back.
-    //
-    // **Each convention gets its own compiled block**, because the convention
-    // is copied into the block while it is compiled (`src/pcre2_compile.c:10976`,
-    // from the context field written at `:10708`) and `pcre2_set_newline_N`
-    // only reaches the context (`src/pcre2_context.c:362-379`). Changing the
-    // context afterwards cannot reach a block that already exists, so a test
-    // that changed it and re-matched the same block would be checking nothing.
+    // Newline settings are copied into each pattern, so test each convention with its own block.
+    // CRLF mode distinguishes a bare LF and rejects invalid values.
     var context = try pcre2.CompileContext.create(null);
     defer context.deinit();
 
@@ -1108,24 +856,18 @@ test "the newline convention the compile context sets changes what `$` accepts" 
     var crlf_data = try pcre2.MatchData.create(&under_crlf);
     defer crlf_data.deinit();
 
-    // The same subject, the same pattern, one answer each: LF is a line
-    // terminator under the first convention and is not under the second.
+    // LF ends a line in LF mode, but not in CRLF mode.
     switch (try under_crlf.match(widenLiteral("a\n"), 0, .{}, &crlf_data, null)) {
         .no_match => {},
         else => return error.FixtureMismatch,
     }
-    // Which is not the block refusing to match: under CRLF a real CRLF is what
-    // `$` accepts, so the same pattern and the same block do match there.
+    // CRLF mode still matches a real CRLF ending.
     switch (try under_crlf.match(widenLiteral("a\r\n"), 0, .{}, &crlf_data, null)) {
         .matched => {},
         else => return error.FixtureMismatch,
     }
 
-    // A value the switch in `src/pcre2_context.c:362-376` does not have is
-    // refused rather than stored, and the previous setting survives the refusal
-    // because the setter never reaches the field. Compiled once more, so that
-    // is a statement about the setting the context still holds and not about a
-    // block compiled before the refusal.
+    // Invalid settings are refused without replacing the previous value.
     try std.testing.expectError(error.SettingRefused, context.setNewline(99));
     var after_refusal = switch (try pcre2.Regex.compileWith(widenLiteral("a$"), .{}, &context)) {
         .compiled => |regex| regex,
@@ -1158,14 +900,8 @@ test "a glob is converted into a pattern the same compiler then accepts" {
         },
     };
     defer converted.deinit();
-    // The conversion allocated, so it is a block of its own rather than a
-    // window on the caller's buffer. The block is NUL-terminated, but the
-    // reported length is the text and not the terminator: the glob converter
-    // writes the NUL and then answers `out.output_size - 1`
-    // (`src/pcre2_convert.c:1080`, `:1092`), and `pcre2_compile` takes an
-    // explicit length, so nothing downstream needs the terminator inside the
-    // slice. What is checked is that the glob was really expanded into
-    // something longer than itself, not where its last unit happens to sit.
+    // Converted text is NUL-terminated, but its reported length excludes NUL.
+    // Compile the returned slice by its explicit length.
     try std.testing.expect(converted.slice().len > "*.txt".len);
 
     var compiled = switch (try pcre2.Regex.compile(converted.slice(), .{})) {
@@ -1185,23 +921,17 @@ test "a glob is converted into a pattern the same compiler then accepts" {
         else => return error.FixtureMismatch,
     }
 
-    // The separator is what makes this a glob and not a wildcard: `*` is
-    // converted to a class that cannot match `/`, so the pattern is bounded by
-    // path components on both sides. Both of these are the boundaries a caller
-    // relies on, and neither is visible from the two matches above.
+    // A path glob's wildcard does not cross `/`.
     switch (try compiled.match(widenLiteral("src/notes.txt"), 0, .{}, &match_data, null)) {
         .no_match => {},
         else => return error.FixtureMismatch,
     }
-    // Only the separator is excluded, which is worth saying out loud: a
-    // backslash is an ordinary character in the subject and this pattern still
-    // matches across one.
+    // Backslash remains an ordinary subject character.
     switch (try compiled.match(widenLiteral("src\\notes.txt"), 0, .{}, &match_data, null)) {
         .matched => {},
         else => return error.FixtureMismatch,
     }
-    // And a name that ends in the glob's own literal still matches, which says
-    // the `.txt` part was converted as an escaped literal rather than dropped.
+    // The `.txt` suffix remains part of the converted pattern.
     switch (try compiled.match(widenLiteral("a.txt"), 0, .{}, &match_data, null)) {
         .matched => {},
         else => return error.FixtureMismatch,
@@ -1224,11 +954,7 @@ fn noteCallout(block: [*c]pcre2.Surface.Types.CalloutBlock, data: ?*anyopaque) c
         // which is what makes the typed code-unit pointer visible here.
         state.saw_this_subject = (block.*.subject == state.subject);
     }
-    // Zero continues the match at this position. The sign is what carries the
-    // meaning: a positive value abandons the attempt at this position as a
-    // non-match and a negative one abandons the whole attempt with that
-    // number (`src/pcre2_match.c:5989-5994`, `:6028-6030`), so "non-zero"
-    // is not a way of saying "keep going".
+    // Zero continues; positive declines this start and negative aborts with that code.
     return 0;
 }
 
@@ -1262,13 +988,7 @@ test "JIT is refused in a build with no SLJIT, and a JIT stack is refused with i
     var compiled = try mustCompile(widenLiteral("a+"), .{});
     defer compiled.deinit();
 
-    // `deps/sljit` is an empty submodule, so `SUPPORT_JIT` is 0 and
-    // `pcre2_jit_compile_8` is upstream's `#ifndef SUPPORT_JIT` fallback
-    // (`src/pcre2_jit_compile.c:14303-14432`). The refusal is a value with
-    // upstream's number in it, not an error, because a caller that asks may be
-    // talking to a provider that has JIT -- so which answer this build gets is
-    // recorded and the rest of the test is written against it rather than
-    // against the configuration.
+    // This build has no SLJIT; record whether the provider nevertheless reports JIT support.
     var jit = false;
     switch (try compiled.jitCompile(pcre2.jit_option.complete)) {
         .compiled => jit = true,
@@ -1278,10 +998,7 @@ test "JIT is refused in a build with no SLJIT, and a JIT stack is refused with i
         },
     }
 
-    // The stack is a different entry point with a different fallback: it answers
-    // NULL rather than a code (`src/pcre2_jit_misc_inc.h:125-134`), and the two
-    // arrive the same way at `pcre2_general_context_create`, so the facade names
-    // this one for what it is.
+    // JIT-stack creation is independently unsupported in this build.
     try std.testing.expectError(error.JitUnsupported, pcre2.JitStack.create(1024, 8192));
 
     var match_data = try pcre2.MatchData.create(&compiled);
@@ -1289,9 +1006,7 @@ test "JIT is refused in a build with no SLJIT, and a JIT stack is refused with i
     var context = try pcre2.MatchContext.init();
     defer context.deinit();
 
-    // The interpreted matcher works for the same pattern and subject either
-    // way, so it is what establishes that there is a real answer to compare
-    // the JIT path against.
+    // Establish the interpreter result before comparing the JIT path.
     const subject = widenLiteral("xxaaay");
     switch (try compiled.match(subject, 0, .{}, &match_data, &context)) {
         .matched => {},
@@ -1304,7 +1019,7 @@ test "JIT is refused in a build with no SLJIT, and a JIT stack is refused with i
     );
 
     switch (try compiled.jitMatch(subject, 0, .{}, &match_data, &context)) {
-        // With JIT code the two entry points are the same matcher.
+        // JIT code uses the same matcher.
         .matched => {
             try std.testing.expect(jit);
             try std.testing.expectEqualSlices(
@@ -1313,18 +1028,12 @@ test "JIT is refused in a build with no SLJIT, and a JIT stack is refused with i
                 (try match_data.group(0)) orelse return error.FixtureMismatch,
             );
         },
-        // Without it there is **no fallback**: `pcre2_jit_match_N` is upstream's
-        // `#ifndef SUPPORT_JIT` body, which ignores every argument and answers
-        // `PCRE2_ERROR_JIT_BADOPTION` (`src/pcre2_jit_match_inc.h:95-103`). It
-        // does not call `pcre2_match_N`, so this is a refusal carrying upstream's
-        // number rather than a quiet restatement of the interpreted answer.
+        // There is no interpreter fallback when JIT is disabled.
         .failed => |failure| {
             try std.testing.expect(!jit);
             try std.testing.expectEqual(@as(i32, pcre2.c.PCRE2_ERROR_JIT_BADOPTION), failure.code);
             try std.testing.expect(failure.text.len > 0);
-            // An attempt that failed leaves the block with nothing readable,
-            // even though the interpreted attempt on the same block just
-            // matched: the JIT attempt is a different attempt.
+            // A failed JIT attempt clears the prior match state.
             try std.testing.expect(!match_data.matched);
             try std.testing.expect((try match_data.groupRange(0)) == null);
         },
@@ -1342,10 +1051,7 @@ test "substitution answers the length it needs, then writes it" {
     const subject = widenLiteral("aaa");
     const replacement = widenLiteral("b");
 
-    // Nothing to write into, and the overflow option set: the call answers the
-    // length the result needs, including its terminating NUL, and writes
-    // nothing (`src/pcre2_substitute.c:1746-1755`). Three replacements of one
-    // unit each plus the NUL is four.
+    // Overflow mode reports required capacity, including NUL, without writing.
     switch (try compiled.substitute(
         subject,
         0,
@@ -1359,9 +1065,7 @@ test "substitution answers the length it needs, then writes it" {
         else => return error.FixtureMismatch,
     }
 
-    // A buffer exactly that size, and no overflow option: the result lands in
-    // the caller's own storage and the return is the number of replacements
-    // (`src/pcre2_substitute.c:1757-1764`).
+    // A fitting buffer receives the result and replacement count.
     var buffer: [4]Unit = undefined;
     switch (try compiled.substitute(
         subject,
@@ -1380,8 +1084,7 @@ test "substitution answers the length it needs, then writes it" {
         else => return error.FixtureMismatch,
     }
 
-    // One unit too few and nothing is written, which is a different answer from
-    // the overflow one and says so.
+    // A short buffer is refused without writing.
     var short: [3]Unit = undefined;
     try std.testing.expectError(
         error.SubstituteBufferTooSmall,
@@ -1397,16 +1100,7 @@ test "substitution answers the length it needs, then writes it" {
     );
 }
 
-// A block describes the last thing that ran on it, and `substitute` is that
-// thing. Upstream matches into the caller's block
-// (`src/pcre2_substitute.c:984`) and, on the way out, stores the number of
-// replacements it made in `match_data->rc` (`:1762`, `:1768`) -- a field every
-// native substring entry point reads as a pair count
-// (`src/pcre2_substring.c:317`, `:390`). The vector itself holds the *last*
-// internal match's pairs, so a description left over from an earlier match
-// would hand the next caller offsets computed against a subject this block no
-// longer remembers, and a pair count larger than the vector would make
-// `pcre2_substring_list_get_N` walk past the end of it.
+// Substitution invalidates prior match data unless `matched` mode preserves it.
 test "a substitution leaves the block describing nothing, whatever the match before it found" {
     nativeReady();
     var compiled = try mustCompile(widenLiteral("(a)"), .{});
@@ -1414,8 +1108,7 @@ test "a substitution leaves the block describing nothing, whatever the match bef
     var match_data = try pcre2.MatchData.create(&compiled);
     defer match_data.deinit();
 
-    // One code unit long, so an offset out of the substitute's subject is out
-    // of this one too.
+    // Start with a successful match to make stale captures observable.
     switch (try compiled.match(widenLiteral("a"), 0, .{}, &match_data, null)) {
         .matched => {},
         else => return error.FixtureMismatch,
@@ -1426,9 +1119,7 @@ test "a substitution leaves the block describing nothing, whatever the match bef
         (try match_data.group(1)) orelse return error.FixtureMismatch,
     );
 
-    // Five matches replaced by two code units each. The result is longer than
-    // the subject above, the last internal match ends at offset 5, and there
-    // are more replacements than the block has pairs.
+    // This substitution makes more replacements than the block has pairs.
     var buffer: [16]Unit = undefined;
     switch (try compiled.substitute(
         widenLiteral("aaaaa"),
@@ -1447,9 +1138,7 @@ test "a substitution leaves the block describing nothing, whatever the match bef
         else => return error.FixtureMismatch,
     }
 
-    // Every capture accessor now reports the one fact: there is no capture
-    // here to read. The range comes first, because whether it is there
-    // decides whether asking the rest is safe at all.
+    // After substitution, all capture accessors report unavailable.
     if ((try match_data.groupRange(1)) != null) return error.FixtureMismatch;
     if ((try match_data.group(1)) != null) return error.FixtureMismatch;
     try std.testing.expectError(error.SubstringUnavailable, match_data.ovector());
@@ -1457,7 +1146,7 @@ test "a substitution leaves the block describing nothing, whatever the match bef
     try std.testing.expectError(error.SubstringUnavailable, match_data.get(1));
     try std.testing.expectError(error.SubstringUnavailable, match_data.copy(1, &buffer));
 
-    // And the block is not spent: it carries the next attempt like any other.
+    // The block can be reused by a later match.
     switch (try compiled.match(widenLiteral("xa"), 0, .{}, &match_data, null)) {
         .matched => {},
         else => return error.FixtureMismatch,
@@ -1471,19 +1160,10 @@ test "a substitution leaves the block describing nothing, whatever the match bef
 
 test "the DFA matcher finds the longest match and says when it could not fit them all" {
     nativeReady();
-    // **How many** matches a DFA run reports is a fact about the compiled
-    // pattern, not about the matcher: auto-possessification rewrites a
-    // trailing `a+` as if it were `a++`, and then only one possible match
-    // exists at all (`doc/pcre2.txt:4369-4374`). Both are checked here, on the
-    // same subject, because that is what makes the count a real answer: the
-    // greedy pattern has one candidate and the ungreedy one has three, and
-    // "longest first" is an ordering *among the candidates that were found*.
+    // Greedy `a+` has one DFA match; ungreedy `a+?` exposes shorter candidates.
     const subject = widenLiteral("aaab");
     var workspace: [32]c_int = undefined;
-    // A named `var` rather than `&.{ .offsets = ... }`: taking the address of
-    // a struct literal builds a constant temporary, and `dfa` wants a mutable
-    // `*DfaWorkspace`. `too_small` below is spelled the same way for the same
-    // reason.
+    // Keep the workspace mutable because `dfa` takes a pointer.
     var found: pcre2.DfaWorkspace = .{ .offsets = &workspace };
 
     var greedy = try mustCompile(widenLiteral("a+"), .{});
@@ -1492,13 +1172,7 @@ test "the DFA matcher finds the longest match and says when it could not fit the
     defer greedy_data.deinit();
     switch (try greedy.dfa(subject, 0, .{}, &greedy_data, null, &found)) {
         .matched => |matched| {
-            // One candidate, because that is all this compiled pattern has.
-            // It is the whole run of 'a's: a possessive repeat takes everything
-            // the repeat can take and gives nothing back, and the optimizer
-            // applies it to a greedy repeat with nothing after it
-            // (`src/pcre2_auto_possess.c:612-613`), so "the longest match" and
-            // "the only match" are the same answer here rather than two
-            // different claims.
+            // Auto-possessification leaves only one candidate for greedy `a+`.
             try std.testing.expectEqual(@as(usize, 1), matched.pairs);
             const offsets = try greedy_data.ovector();
             try std.testing.expectEqual(@as(usize, 0), offsets[0]);
@@ -1507,12 +1181,7 @@ test "the DFA matcher finds the longest match and says when it could not fit the
         else => return error.FixtureMismatch,
     }
 
-    // The ungreedy repeat is upstream's own recommendation for getting more
-    // than one match out of this matcher (`doc/pcre2.txt:4373-4374`), and it
-    // is what makes the ordering observable. The block is sized for the pairs
-    // rather than taken from the pattern, because for this matcher the vector
-    // has to hold every simultaneous match and not one pair per parenthesis
-    // (`doc/pcre2_dfa_match.3:33-35`).
+    // Ungreedy matching exposes multiple longest-first candidates.
     var ungreedy = try mustCompile(widenLiteral("a+?"), .{});
     defer ungreedy.deinit();
     var roomy = try pcre2.MatchData.createWithOvector(8, null);
@@ -1521,12 +1190,7 @@ test "the DFA matcher finds the longest match and says when it could not fit the
         .matched => |matched| {
             try std.testing.expectEqual(@as(usize, 3), matched.pairs);
             const offsets = try roomy.ovector();
-            // The ordering is the documented one -- longest first, and every
-            // shorter match an initial substring of the longer ones
-            // (`doc/pcre2.txt:4365-4366`) -- so it is asserted as a property
-            // over the pairs that were reported rather than as one hand-listed
-            // triple. What each pair spans is then checked against the subject,
-            // which is what makes it a match and not a bookkeeping offset.
+            // Results are longest-first and each reported range must match the subject.
             var previous: ?usize = null;
             var run: [8]Unit = @splat(@as(Unit, 'a'));
             for (0..matched.pairs) |i| {
@@ -1534,27 +1198,18 @@ test "the DFA matcher finds the longest match and says when it could not fit the
                 const end = offsets[2 * i + 1];
                 try std.testing.expect(start <= end);
                 try std.testing.expect(end <= subject.len);
-                // Each pair is at most as long as the one before it, which is
-                // the ordering, and each spans only 'a's, which is the match.
+                // Each pair is no longer than the prior one and contains only `a`.
                 if (previous) |was| try std.testing.expect(end - start <= was);
                 previous = end - start;
                 try std.testing.expectEqualSlices(Unit, run[0 .. end - start], subject[start..end]);
             }
-            // The first pair is the longest, and for this subject the longest
-            // possible match of this pattern is the whole run of 'a's: without
-            // this an ordering property over three empty pairs would be
-            // satisfied by nothing at all.
+            // Check the longest result as well as ordering.
             try std.testing.expectEqual(subject.len - 1, offsets[1] - offsets[0]);
         },
         else => return error.FixtureMismatch,
     }
 
-    // The same attempt against a block with room for one pair, which is what
-    // `MatchData.create` gives for a pattern with no capturing groups. The
-    // matcher fills the vector with the longest matches and answers zero
-    // (`doc/pcre2.txt:4366-4368`), which is its own outcome rather than a
-    // match with a short vector -- so the longest is still readable and the
-    // two that did not fit are simply not there.
+    // A one-pair block reports truncation while keeping the longest range readable.
     var cramped = try pcre2.MatchData.create(&ungreedy);
     defer cramped.deinit();
     switch (try ungreedy.dfa(subject, 0, .{}, &cramped, null, &found)) {
@@ -1571,9 +1226,7 @@ test "the DFA matcher finds the longest match and says when it could not fit the
         else => return error.FixtureMismatch,
     }
 
-    // A workspace below the floor upstream accepts is not a workspace at all.
-    // Twenty units is that floor (`src/pcre2_dfa_match.c:3437`), and the
-    // refusal arrives before the matcher runs.
+    // Workspaces below PCRE2's minimum are refused before matching.
     var too_small_offsets: [1]c_int = undefined;
     var too_small: pcre2.DfaWorkspace = .{ .offsets = &too_small_offsets };
     try std.testing.expectError(
@@ -1592,19 +1245,14 @@ test "a compiled pattern survives a round trip through its serialized form" {
     defer stream.deinit();
     try std.testing.expect(stream.len > 0);
 
-    // The stream says how many blocks are in it, which is what `decode` needs,
-    // and that number is a fact about the bytes rather than about this test.
+    // The stream count is the value required by `decode`.
     try std.testing.expectEqual(@as(u32, 1), try pcre2.Regex.serializedCodeCount(stream.slice()));
 
     var decoded: [1]?*pcre2.Surface.Types.Code = undefined;
     var round_tripped = try pcre2.Regex.decode(stream.slice(), 1, &decoded, null);
     defer round_tripped.deinit();
 
-    // A decoded block is an ordinary one: it carries the same name table and
-    // matches the same subject with the same capture. The name is compared in
-    // this width's code units (`src/pcre2_compile_cgroup.c:168`), and a
-    // missing entry is a mismatch reported rather than an unwrap that takes
-    // the whole test binary down with it.
+    // The decoded block retains its metadata and match behavior.
     try std.testing.expectEqual(compiled.captureCount(), round_tripped.captureCount());
     try std.testing.expectEqual(compiled.nameCount(), round_tripped.nameCount());
     try std.testing.expectEqualSlices(
@@ -1626,21 +1274,10 @@ test "a compiled pattern survives a round trip through its serialized form" {
     );
 }
 
-// The serialization entry points refuse several things that are not failures
-// to allocate. `pcre2_serialize_encode_N` compares the character tables of the
-// blocks it is given **by address** and answers `PCRE2_ERROR_MIXEDTABLES` when
-// they differ (`src/pcre2_serialize.c:99-102`), and the two readers answer
-// `PCRE2_ERROR_BADMAGIC` for bytes that are not a stream at all (`:179`,
-// `:273`). The only allocation failure among them is
-// `PCRE2_ERROR_NOMEMORY` (`:108`, `:192`, `:221`), so a caller that has to
-// decide between trying again smaller and fixing its input cannot make that
-// decision if every refusal arrives under one name that says the heap ran out.
+// Serialization distinguishes incompatible tables and malformed data from allocation failure.
 test "a stream PCRE2 will not build or read is refused as a refusal, not as a failed allocation" {
     nativeReady();
-    // Two blocks whose character tables are two different addresses holding
-    // the same bytes: `pcre2_compile` stores whichever pointer the compile
-    // context held (`src/pcre2_compile.c:10451`, `:10960`), and it is those
-    // pointers that serialization compares.
+    // The two compiled blocks use distinct character-table addresses.
     var general = try pcre2.GeneralContext.init();
     defer general.deinit();
     const tables = try general.tables();
@@ -1664,17 +1301,12 @@ test "a stream PCRE2 will not build or read is refused as a refusal, not as a fa
         shared.serialize(&.{own.code.?}, &mixed),
     );
 
-    // One block on its own has no second table to disagree with, so the same
-    // call succeeds. That is what makes the refusal above about the pair.
+    // A single block has no table mismatch.
     var single: [1]?*const pcre2.Surface.Types.Code = undefined;
     var stream = try shared.serialize(&.{}, &single);
     defer stream.deinit();
 
-    // `magic` is the first field of the stream's header
-    // (`src/pcre2_internal.h:2169-2174`, written at
-    // `src/pcre2_serialize.c:114-115`), so one changed byte is enough to make
-    // the whole stream something neither reader will accept. The rest of the
-    // header, and every block in it, is upstream's own output and untouched.
+    // Change the stream magic byte so both readers reject it.
     const bytes = stream.slice();
     const damaged = try std.testing.allocator.dupe(u8, bytes);
     defer std.testing.allocator.free(damaged);
@@ -1691,12 +1323,7 @@ test "a stream PCRE2 will not build or read is refused as a refusal, not as a fa
     );
 }
 
-// `pcre2_next_match_N` answers TRUE(1) for "attempt again" and FALSE(0) when
-// there is none, and never anything else (`src/pcre2_match_next.c:96-169`,
-// `doc/pcre2.txt:3433-3439`), so `MatchData.next` answers a plain bool and a
-// resumed loop terminates. `a*` over `a` is the shortest subject that reaches
-// both answers: a non-empty match at 0, then the empty match at the end of the
-// subject, which is the FALSE branch (`src/pcre2_match_next.c:148-152`).
+// `next` updates its out-parameters only when another match exists.
 test "resuming a match walks every match and then reports that there are no more" {
     nativeReady();
     var compiled = try mustCompile(widenLiteral("a*"), .{});
@@ -1719,9 +1346,7 @@ test "resuming a match walks every match and then reports that there are no more
         if (found > 2) return error.FixtureMismatch;
         const span = (try match_data.groupRange(0)) orelse return error.FixtureMismatch;
         if (span.start != found - 1 or span.end != 1) return error.FixtureMismatch;
-        // The first attempt matched the whole subject and the second matched
-        // the empty string at its end. That second one is the end-of-subject
-        // FALSE, so this is not decoration: it is what the loop turns on.
+        // The empty match at subject end is the final successful iteration.
         try std.testing.expectEqualSlices(
             Unit,
             if (found == 1) widenLiteral("a") else widenLiteral(""),
@@ -1730,22 +1355,14 @@ test "resuming a match walks every match and then reports that there are no more
         if (!match_data.next(&start_offset, &options)) break;
     }
     try std.testing.expectEqual(@as(usize, 2), found);
-    // The FALSE return writes neither out-parameter, so this is still what the
-    // last TRUE asked for: zero (`src/pcre2_match_next.c:166-167`).
+    // A false result leaves the last successful out-parameters unchanged.
     try std.testing.expectEqual(@as(u32, 0), options);
 }
 
-// `pcre2_serialize_decode_N` writes one `pcre2_code *` per block it decodes and
-// cannot see how long the caller's array is (`src/pcre2_serialize.c:183-184`,
-// `:204`, `:243`), so a destination shorter than `count` is refused instead of
-// overrun. Three blocks in the stream, one slot in the destination.
+// Decode refuses a destination shorter than the stream's block count.
 test "decoding refuses a destination shorter than the blocks asked for" {
     nativeReady();
-    // The counting pair is the point of this general context, not decoration.
-    // A decoded block is allocated through the `general` handed to `decode`
-    // (`src/pcre2_serialize.c:215-218`), and `pcre2_code_free_N` releases it
-    // through that block's own memctl (`src/pcre2_compile.c:1227`), so this
-    // pair is what makes every decoded block observable on the free side.
+    // Track allocations made by `decode` so every returned block is verified.
     var counter: Counter = .{};
     var general = try pcre2.GeneralContext.create(
         countingAllocate,
@@ -1758,19 +1375,15 @@ test "decoding refuses a destination shorter than the blocks asked for" {
     try context.setCharacterTables(tables);
 
     var shared = try mustCompile(widenLiteral("a"), .{});
-    // The same block three times, which the encoder accepts: it compares the
-    // character tables of the blocks it is given by address, and one block
-    // cannot disagree with itself (`src/pcre2_serialize.c:99-102`).
+    // Repeating one block keeps all table addresses identical.
     var scratch: [3]?*const pcre2.Surface.Types.Code = undefined;
     var stream = try shared.serialize(&.{ shared.code.?, shared.code.? }, &scratch);
 
-    // A fact about the bytes, not about this test: the stream really does hold
-    // three blocks, so the refusal below is about the destination.
+    // Confirm the stream contains three blocks before testing destination size.
     const count = try pcre2.Regex.serializedCodeCount(stream.slice());
     try std.testing.expectEqual(@as(u32, 3), count);
 
-    // Initialised rather than `undefined`, so the check below is that the call
-    // wrote nothing rather than a read of memory this test never set.
+    // Initialize the short destination to verify refusal writes nothing.
     var short = [_]?*pcre2.Surface.Types.Code{null};
     try std.testing.expectError(
         error.OvectorTooSmall,
@@ -1778,8 +1391,7 @@ test "decoding refuses a destination shorter than the blocks asked for" {
     );
     try std.testing.expectEqual(@as(?*pcre2.Surface.Types.Code, null), short[0]);
 
-    // The same bytes into a destination that is long enough, which is what
-    // makes the refusal about the length rather than about the stream.
+    // Decode the same stream into a correctly sized destination.
     var roomy: [3]?*pcre2.Surface.Types.Code = undefined;
     var decoded = try pcre2.Regex.decode(stream.slice(), count, &roomy, &general);
     try std.testing.expectEqual(shared.captureCount(), decoded.captureCount());
@@ -1787,20 +1399,12 @@ test "decoding refuses a destination shorter than the blocks asked for" {
     try std.testing.expect(roomy[1] != null);
     try std.testing.expect(roomy[2] != null);
 
-    // Each of the three is a block this pair handed out, asked of the pair
-    // rather than of a count: `allocations` is already positive from the two
-    // contexts and the character tables, so only the addresses say the decode
-    // went through the allocator it was given. A decoder that quietly used
-    // upstream's default would leave all three unclaimed here while still
-    // balancing the counters at the end.
+    // Confirm each decoded block came from the supplied allocator.
     try std.testing.expect(isLive(&counter, roomy[0].?));
     try std.testing.expect(isLive(&counter, roomy[1].?));
     try std.testing.expect(isLive(&counter, roomy[2].?));
 
-    // Everything this test made through that pair, released exactly once.
-    // `decode` answered the first block as a `Regex` and the other two as bare
-    // pointers; each is released through the memctl it carries, which is this
-    // pair's.
+    // Release the decoded blocks and their contexts through the supplied allocator.
     for (roomy[1..]) |block| freeBlock(block);
     decoded.deinit();
     general.freeTables(tables);
@@ -1809,42 +1413,14 @@ test "decoding refuses a destination shorter than the blocks asked for" {
     stream.deinit();
     shared.deinit();
 
-    // Conservation and ownership, with nothing pinned. How many blocks a decode
-    // allocates is upstream's business; what is asserted is that every block
-    // this pair handed out came back, that none came back that it never handed
-    // out, and that none was handed out that it could not track -- the last two
-    // counters exist so that a pair which dropped what it could not match could
-    // not satisfy the first line without releasing anything.
+    // Every allocation was tracked and freed once; unknown and unrecorded counts stay zero.
     try std.testing.expectEqual(counter.allocations, counter.frees);
     try std.testing.expectEqual(@as(usize, 0), counter.unknown_frees);
     try std.testing.expectEqual(@as(usize, 0), counter.unrecorded);
 }
 
-/// Releases one compiled block through the published native route.
-///
-/// `pcre2_code_free_N` is the only thing that frees a compiled block, and the
-/// facade hands out the translated header that declares it as `pcre2.c`
-/// precisely for the entry points it does not wrap (`zig/root.zig:245`). The
-/// typed surface cannot make a second owner instead: `Regex.code` is readable
-/// and is handed to unwrapped calls, but its own documentation says writing it
-/// is not a supported use (`zig/widthed.zig:1687-1691`), so a `Regex` built
-/// from one of these pointers would not be a supported value either.
-///
-/// Which allocator this reaches is a fact about the block, and for a decoded
-/// block the block's memctl is the one `decode` was handed, not the one that
-/// was serialized: the new block is allocated through `gcontext`
-/// (`src/pcre2_serialize.c:215-218`) and the copy that follows starts one
-/// `pcre2_memctl` past both ends (`:225-228`), so the allocator that produced
-/// the stream is dropped rather than carried over. `pcre2_code_free_N` then
-/// releases the block, and for a decoded one its shared tables too, through
-/// `code->memctl` (`src/pcre2_compile.c:1212-1227`). Passing the `Counter` pair
-/// to `decode` is therefore what makes every one of these frees observable,
-/// which is what the test above relies on.
-///
-/// The width is picked at compile time, so a build names the one symbol that
-/// belongs to it and the other two are never referenced. All three are declared,
-/// and all three are routed in a runtime-loaded build
-/// (`runtime/library.zig:238`, `:270`).
+/// Frees a decoded PCRE2 block through this build's width-specific symbol.
+/// The block's allocator metadata routes deallocation to the pair passed to `decode`.
 fn freeBlock(block: ?*pcre2.Surface.Types.Code) void {
     switch (pcre2.compiled_width) {
         .@"8" => pcre2.c.pcre2_code_free_8(block),
@@ -1853,18 +1429,10 @@ fn freeBlock(block: ?*pcre2.Surface.Types.Code) void {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The POSIX wrapper, where this build has one
-// ---------------------------------------------------------------------------
-
 test "the POSIX wrapper compiles, matches and reports its own codes" {
     nativeReady();
     if (pcre2.Posix.availability != .linked) {
-        // Not a skip and not a narrowing of what is checked: the wrapper is 8-bit
-        // by construction (`src/pcre2posix.h:104-119`), so a build of width 16
-        // or 32 has no wrapper to call at all. The fact that this build says so
-        // is the assertion; `Posix.compile` there is a compile-time refusal
-        // naming the missing fact.
+        // 16/32-bit builds lack POSIX declarations; assert availability instead of skipping.
         try std.testing.expectEqual(
             @as(pcre2.Posix.Availability, .unavailable),
             pcre2.Posix.availability,
@@ -1872,28 +1440,13 @@ test "the POSIX wrapper compiles, matches and reports its own codes" {
         return;
     }
 
-    // Under `-Druntime` this test is what checks that the four POSIX names go
-    // through the dispatch rather than being left as direct externs: every call
-    // below reads a table field, and a direct reference would be a link error
-    // naming `pcre2_regcomp` and its three siblings rather than a runtime
-    // answer. `build.zig` compiles the wrapper into the core for width 8 and
-    // exports the four from it, which is what lets one provider carry them.
-    // Under a linked build the same calls are ordinary linked calls, the
-    // expectations are the same, and `pcre2.Posix.routed` says which mechanism
-    // this build is in.
+    // Linked and runtime routes expose the same wrapper; `routed` identifies the route.
 
-    // The subject is spelled with the sentinel type it is: the wrapper takes a
-    // `const char *` and measures it with `strlen`
-    // (`src/pcre2posix.c:385-388`), so that is what the typed surface asks
-    // for rather than a slice whose length it would have to invent.
+    // The wrapper takes a NUL-terminated subject.
     const subject: [:0]const u8 = "xabc";
     var matches: [4]pcre2.Posix.Match = undefined;
 
-    // `compile` answers with the wrapper's own block by value rather than a
-    // pointer into its own frame, so the pattern is this test's: `exec` takes
-    // a pointer to one, and the `deinit` below releases the compiled pattern and
-    // the match-data block the wrapper put inside it, once
-    // (`src/pcre2posix.c:254-259`).
+    // `compile` returns an owned value; `exec` borrows it until `deinit`.
     var compiled: pcre2.Posix.Compiled = switch (try pcre2.Posix.compile("a(b)c", 0)) {
         .compiled => |owned| owned,
         .rejected => |rejection| {
@@ -1916,20 +1469,10 @@ test "the POSIX wrapper compiles, matches and reports its own codes" {
         else => return error.FixtureMismatch,
     }
 
-    // A pattern the wrapper refuses is a value carrying POSIX's own code, and
-    // `pcre2_regerror` has a message for it.
-    //
-    // An unbalanced `(` is the parenthesis error and not the catch-all: the
-    // wrapper translates PCRE2's compile errors through its own table, and the
-    // missing-closing-parenthesis entry is `REG_EPAREN`
-    // (`src/pcre2posix.c:146`, reached because `pcre2_compile` answers 114 and
-    // the wrapper indexes with `errorcode - 100`, `:310-313`). `REG_BADPAT` is
-    // what an error that is *not* in that table becomes, so pinning it here
-    // would assert the fallback and not the classification.
+    // A missing closing parenthesis maps to `REG_EPAREN`, not fallback `REG_BADPAT`.
     switch (try pcre2.Posix.compile("a(b", 0)) {
         .compiled => |compiled_regex| {
-            // `deinit` takes the block mutably and the capture is const, so
-            // the release goes through a mutable copy of it.
+            // Release the owned value before returning from unexpected success.
             var to_release = compiled_regex;
             to_release.deinit();
             return error.FixtureMismatch;
@@ -1938,12 +1481,7 @@ test "the POSIX wrapper compiles, matches and reports its own codes" {
             try std.testing.expectEqual(@as(c_int, pcre2.Posix.code.eparen), rejection.code);
         },
     }
-    // The other direction of the same parenthesis problem is classified the
-    // same way rather than falling through to `REG_BADPAT`: `a)` is an
-    // unmatched closing parenthesis, 122, which that table also maps to
-    // `REG_EPAREN` (`src/pcre2posix.c:156`). Two patterns and two table entries
-    // landing on one code is what shows the answer is the classification and
-    // not the pattern text.
+    // An unmatched closing parenthesis also maps to `REG_EPAREN`.
     switch (try pcre2.Posix.compile("a)", 0)) {
         .compiled => |compiled_regex| {
             var to_release = compiled_regex;
@@ -1967,29 +1505,19 @@ test "the POSIX wrapper compiles, matches and reports its own codes" {
     }
     try std.testing.expectEqual(pcre2.Posix.unset, matches[1].rm_so);
     try std.testing.expect((pcre2.Posix.capture("ac", matches[1]) == null));
-    // Every slot the pattern did not fill is the same marker, and it is filled
-    // because `nmatch` is the length of the array the caller passed rather than
-    // anything about the subject: `rc` is clamped to it and the rest of the
-    // vector is written out to it (`src/pcre2posix.c:400-408`).
+    // Unused output slots are set to the POSIX `unset` marker.
     try std.testing.expectEqual(pcre2.Posix.unset, matches[3].rm_so);
     try std.testing.expectEqual(pcre2.Posix.unset, matches[3].rm_eo);
 
-    // `REG_STARTEND` makes the subject argument carry offsets rather than a
-    // string, so the typed surface refuses it instead of passing a pointer
-    // where the wrapper reads two integers.
+    // `REG_STARTEND` needs pointer-encoded bounds unsupported by this slice API.
     try std.testing.expectError(
         error.UnsupportedOption,
         pcre2.Posix.exec(&compiled, "abc", &matches, pcre2.Posix.option.startend),
     );
 }
 
-/// The bytes of `ascii` as this width's code units, for a pattern or subject the
-/// test writes inline.
-///
-/// A comptime array rather than a widening at run time, because every literal in
-/// this file is ASCII and a comptime one cannot be read past its end. The
-/// returned slice points at a container-level constant, so it lives as long as
-/// the test binary does and needs no cleanup.
+/// Converts inline ASCII literals to a static array of selected-width code units.
+/// The array outlives tests; no runtime widening or cleanup is needed.
 fn widenLiteral(comptime ascii: []const u8) []const Unit {
     if (ascii.len == 0) return &.{};
     const widened = comptime blk: {
