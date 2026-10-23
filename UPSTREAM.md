@@ -15,7 +15,7 @@
 
 ## Source scope
 
-This Zig 0.16 package builds PCRE2 from upstream's `src/` tree and translates upstream's public header. The upstream-owned `src/`, `doc/`, and `testdata/` trees are carried unchanged, except that `testdata/foundation-fixtures.zig` is fork-authored. `LICENCE.md`, `COPYING`, `AUTHORS.md`, `SECURITY.md`, `ChangeLog`, `NEWS`, `SUPPORT-LIFECYCLE.md`, `HACKING`, `INSTALL`, `README`, and the upstream build templates in `.paths` are also upstream files. No upstream source, header, test, licence, or fixture bytes are modified.
+This Zig 0.17.0 package builds PCRE2 from upstream's `src/` tree and translates upstream's public header. The upstream-owned `src/`, `doc/`, and `testdata/` trees are carried unchanged, except that `testdata/foundation-fixtures.zig` is fork-authored. `LICENCE.md`, `COPYING`, `AUTHORS.md`, `SECURITY.md`, `ChangeLog`, `NEWS`, `SUPPORT-LIFECYCLE.md`, `HACKING`, `INSTALL`, `README`, and the upstream build templates in `.paths` are also upstream files. No upstream source, header, test, licence, or fixture bytes are modified.
 
 The upstream `README.md` is preserved unchanged as `README.upstream.md`; `README.md` is fork-authored and is covered by `FORK-LICENSE.md`. `.gitignore` is the only upstream file edited: the fork appends re-inclusions and removes or narrows none of upstream's entries. Fork-authored files and their grant are listed in `NOTICE.md` and `FORK-LICENSE.md`.
 
