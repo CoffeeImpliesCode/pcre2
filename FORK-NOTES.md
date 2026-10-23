@@ -9,7 +9,7 @@ Upstream C sources, headers, tests, fixture data, and licence texts remain uncha
 | `.gitignore` | Adds reinclusions for fork-owned files and guards for upstream templates consumed by the build. |
 | `README.md` | Replaces the upstream front door with fork-specific build, support, and consumption guidance. |
 | `README.upstream.md` | Preserves the original upstream README after its move from `README.md`. |
-| `translate.h` | Adds the translation aggregate, width-gated POSIX declarations, and guarded compiler typedefs needed by NetBSD headers. |
+| `translate.h` | Adds the translation aggregate, width-gated POSIX declarations, and guarded compiler typedefs needed for NetBSD headers. |
 | `zig/root.zig` | Adds the public facade that selects the configured width and exposes typed, raw C, POSIX, and runtime-loading APIs. |
 | `zig/widthed.zig` | Adds width-generic wrappers so API types and offsets use the selected code-unit type. |
 | `zig/raw.zig` | Adds typed bindings to width-suffixed C declarations for the selected width. |
@@ -31,6 +31,8 @@ Upstream C sources, headers, tests, fixture data, and licence texts remain uncha
 - `build.zig` generates `config.h` per target and builds the core source set at widths 8, 16, and 32 into one primary artifact. `-Dcode-unit-width` selects the facade and installed artifact name; it does not remove the other width exports.
 - At width 8, `src/pcre2posix.c` is compiled into the core for runtime loading; the separate upstream POSIX library remains. The graph installs upstream tools, including `pcre2posix_test` (normally non-installed), metadata, manuals, documentation, and licence records.
 - Translation uses Aro directly on GNU libc targets. Elsewhere, the target C preprocessor expands `translate.h` before Aro parses it; `-fno-blocks` keeps Darwin block declarations out of the parser, and `translate.h` carries compiler-provided 128-bit typedefs where needed.
+- `pcre2-config` derives its prefix from its installed `bin/` path because Zig 0.17 exposes install paths only during the make phase.
+- `RunTest` receives the source directory as a make-time absolute path argument because Zig 0.17 no longer resolves `LazyPath` during configuration.
 - The `sljit` dependency and JIT build option are removed because the submodule is empty and fetching it would require a network dependency. JIT is disabled, but its public entry points remain and report refusal.
 - `-fsys=pcre2-8` uses an installed header and library instead of bundled C sources. `-Druntime=true` resolves an explicit provider and does not link the native artifact into the facade.
 - The default install builds dynamic linkage on GNU libc targets and static linkage elsewhere. An explicit dynamic request is rejected when the target has no dynamic loader.

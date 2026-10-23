@@ -1,5 +1,7 @@
 # Changelog
 
+- Port to Zig 0.17.0.
+- `pcre2-config` derives its prefix from its installed `bin/` location.
 - `MatchData.next` follows PCRE2's boolean return convention; `Regex.decode` checks destination capacity before decoding.
 - Shared-library dependents resolve the package build artifact; installed artifacts retain prefix-relative loader paths.
 - COFF core builds decorate the in-core POSIX wrapper's calls as local exports.

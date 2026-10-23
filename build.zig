@@ -191,7 +191,7 @@ const Export = struct {
 
 const Pcre2Options = struct {
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     sanitize_c: std.zig.SanitizeC,
     linkage: std.builtin.LinkMode,
     /// Linkage for an installed core; system integration builds no artifact.
@@ -224,7 +224,7 @@ const Pcre2Package = struct {
 
 const SharedOptions = struct {
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     sanitize_c: std.zig.SanitizeC,
     linkage: std.builtin.LinkMode,
     width: CodeUnitWidth,
@@ -416,7 +416,7 @@ pub fn build(b: *std.Build) void {
 
     // ---- Formatting -------------------------------------------------------
 
-    const fmt_paths = [_][]const u8{
+    const fmt_paths = b.pathList(&.{
         "build.zig",
         "build.zig.zon",
         "zig",
@@ -424,11 +424,11 @@ pub fn build(b: *std.Build) void {
         "smoke.zig",
         "consumer",
         fixtures_root,
-    };
+    });
     const fmt_check = b.step("fmt-check", "Check Zig formatting");
-    fmt_check.dependOn(&b.addFmt(.{ .paths = &fmt_paths, .check = true }).step);
+    fmt_check.dependOn(&b.addFmt(.{ .paths = fmt_paths, .check = true }).step);
     const fmt = b.step("fmt", "Format this fork's Zig sources in place");
-    fmt.dependOn(&b.addFmt(.{ .paths = &fmt_paths }).step);
+    fmt.dependOn(&b.addFmt(.{ .paths = fmt_paths }).step);
 }
 
 // Runtime mode builds dispatch from this graph's `TranslateC` step and omits native linking.
@@ -441,7 +441,7 @@ fn addTargetCheck(
     b: *std.Build,
     step: *std.Build.Step,
     query: std.Target.Query,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     sanitize_c: std.zig.SanitizeC,
     linkage_option: ?std.builtin.LinkMode,
     runtime_loaded: bool,
@@ -821,16 +821,16 @@ fn preprocessedAggregate(
         run.addArg(triple);
     }
     // Use the generated core header, then upstream's `src/` directory for `pcre2posix.h`.
-    run.addPrefixedDirectoryArg("-I", header_dir);
-    run.addPrefixedDirectoryArg("-I", b.path("src"));
+    run.addDirectoryArg2(header_dir, .{ .prefix = "-I" });
+    run.addDirectoryArg2(b.path("src"), .{ .prefix = "-I" });
     run.addArg(b.fmt("-DPCRE2_CODE_UNIT_WIDTH={s}", .{@tagName(options.width)}));
     // `-dD` preserves the same width and linkage macros for the translator.
     const exports = Export.from(options.linkage);
     if (exports.static_core) run.addArg("-DPCRE2_STATIC=1");
     if (exports.shared_posix) run.addArg("-DPCRE2POSIX_SHARED=1");
     run.addArg("-o");
-    const preprocessed = run.addOutputFileArg("pcre2_preprocessed.h");
-    run.addFileArg(b.path("translate.h"));
+    const preprocessed = run.addOutputFileArg2("pcre2_preprocessed.h", .{});
+    run.addFileArg2(b.path("translate.h"), .{});
     return preprocessed;
 }
 
@@ -1157,13 +1157,13 @@ fn addUpstreamSuite(
     /// Build-cache copy driven by `RunTest`.
     pcre2test: *std.Build.Step.Compile,
 ) void {
-    const run = b.addSystemCommand(&.{ "sh", "-c", "pcre2test=\"$1\" && export pcre2test && exec \"$0\" \"$2\"" });
+    const run = b.addSystemCommand(&.{ "sh", "-c", "srcdir=\"$3\" && pcre2test=\"$1\" && export srcdir pcre2test && exec \"$0\" \"$2\"" });
     run.setName("RunTest");
-    run.addFileArg(b.path("RunTest"));
-    run.addArtifactArg(pcre2test);
+    run.addFileArg2(b.path("RunTest"), .{});
+    run.addArtifactArg2(pcre2test, .{});
     // The binary carries its build-cache rpath; the run step cannot set it after configure.
     run.addArg(b.fmt("-{t}", .{width}));
-    run.setEnvironmentVariable("srcdir", b.path(".").getPath(b));
+    run.addDirectoryArg2(b.path("."), .{ .make_absolute = true });
     run.setCwd(b.addWriteFiles().getDirectory());
     step.dependOn(&run.step);
 }
@@ -1213,12 +1213,12 @@ fn installPkgConfig(b: *std.Build, options: MetadataOptions) void {
     }
 }
 
-/// Render upstream's `pcre2-config` template with the install prefix, width, and linkage flags.
+/// Render upstream's `pcre2-config` template with width and linkage flags.
 /// The generated script must be made executable before installation.
 fn installConfigScript(b: *std.Build, options: MetadataOptions) void {
     const exports = Export.from(options.linkage);
     const text = substitute(b, &[_][2][]const u8{
-        .{ "@prefix@", b.install_path },
+        .{ "@prefix@", "$(CDPATH= cd \"$(dirname \"$0\")/..\" && pwd)" },
         .{ "@exec_prefix@", "${prefix}" },
         .{ "@libdir@", "${exec_prefix}/lib" },
         .{ "@includedir@", "${prefix}/include" },
@@ -1235,7 +1235,7 @@ fn installConfigScript(b: *std.Build, options: MetadataOptions) void {
     const chmod = b.addSystemCommand(&.{"chmod"});
     chmod.setName("make pcre2-config executable");
     chmod.addArg("+x");
-    chmod.addFileArg(script);
+    chmod.addFileArg2(script, .{});
     b.getInstallStep().dependOn(&chmod.step);
     b.getInstallStep().dependOn(&b.addInstallBinFile(script, "pcre2-config").step);
 }
@@ -1287,7 +1287,7 @@ fn substitute(b: *std.Build, pairs: []const [2][]const u8, template: []const u8)
 fn testModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     facade: *std.Build.Module,
 ) *std.Build.Module {
     return b.createModule(.{
@@ -1305,7 +1305,7 @@ fn testModule(
 fn smokeModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     facade: *std.Build.Module,
 ) *std.Build.Module {
     return b.createModule(.{
@@ -1320,7 +1320,7 @@ fn smokeModule(
 fn fixturesModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     facade: *std.Build.Module,
 ) *std.Build.Module {
     return b.createModule(.{

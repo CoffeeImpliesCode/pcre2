@@ -14,7 +14,7 @@
 { pkgs, ... }:
 
 let
-  sdk = linkage: pkgs.callPackage ./package.nix { zig = pkgs.zig_0_16; inherit linkage; };
+  sdk = linkage: pkgs.callPackage ./package.nix { zig = pkgs.zig_0_17; inherit linkage; };
 
   lib = pkgs.lib;
 
@@ -53,9 +53,9 @@ let
 in
 {
   packages = [
-    # Use the pinned Zig 0.16 compiler.
+    # Use the pinned Zig 0.17 compiler.
     # C toolchain and pkg-config for the consumer package.
-    pkgs.zig_0_16
+    pkgs.zig_0_17
     pkgs.stdenv.cc
     pkgs.pkg-config
     pkgs.gnumake

@@ -68,7 +68,7 @@ stdenv.mkDerivation {
 
     longDescription = ''
       PCRE2 built from PCRE2Project/pcre2 at tag pcre2-10.49, commit
-      6f9d7c1373262c541324a16a358785b33ef116cf, with Zig 0.16.0: the full
+      6f9d7c1373262c541324a16a358785b33ef116cf, with Zig 0.17.0: the full
       code-unit-${toString codeUnitWidth} core with Unicode support, the
       interpreter and the DFA matcher, JIT functionality disabled because the
       JIT's sljit submodule is empty in this checkout and must not be fetched.

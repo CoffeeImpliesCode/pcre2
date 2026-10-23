@@ -7,7 +7,7 @@
     .version = "10.49.0",
     // Fork package identity generated for this name and version.
     .fingerprint = 0x914b3d639d1db54d, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     // JIT is disabled because SLJIT is not shipped; the consumer has a separate manifest.
     .dependencies = .{},
     // `.paths` defines the files fetched with this package.

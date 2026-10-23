@@ -125,21 +125,21 @@ pub const Phase = enum(u8) {
 /// Readiness flag for publishing a configured table.
 /// A release store publishes it; routed calls acquire before reading.
 pub const Ready = struct {
-    phase: std.atomic.Value(u8) = .init(@intFromEnum(Phase.not_loaded)),
+    phase: std.atomic.Value(u8) = .init(@backingInt(Phase.not_loaded)),
 
     /// Acquire-load whether the table is ready.
     pub fn isReady(self: *const Ready) bool {
-        return self.phase.load(.acquire) == @intFromEnum(Phase.ready);
+        return self.phase.load(.acquire) == @backingInt(Phase.ready);
     }
 
     /// The current state, for the loader's own decisions under its lock.
     pub fn state(self: *const Ready) Phase {
-        return @enumFromInt(self.phase.load(.acquire));
+        return @fromBackingInt(@intCast(self.phase.load(.acquire)));
     }
 
     /// Publish or withdraw the table, with release ordering.
     pub fn set(self: *Ready, value: Phase) void {
-        self.phase.store(@intFromEnum(value), .release);
+        self.phase.store(@backingInt(value), .release);
     }
 };
 

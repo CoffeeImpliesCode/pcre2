@@ -20,7 +20,7 @@ Upstream C sources, headers, tests, fixtures and licence texts are unchanged.
 
 ## Build deviations
 
-- `build.zig` extends upstream's Zig 0.16 graph. It builds from this tree and downloads no build dependencies.
+- `build.zig` extends upstream's Zig 0.17.0 graph. It builds from this tree and downloads no build dependencies.
 - The same 31 C translation units are compiled at widths 8, 16 and 32 into one core artifact. `-Dcode-unit-width` selects its installed name and the width of the Zig facade; it does not change the artifact's three-width closure.
 - The POSIX wrapper is also compiled into the 8-bit core for runtime loading. The separate upstream `libpcre2-posix` artifact remains. The build installs `pcre2posix_test`, which upstream classifies as a non-installed test program.
 - `config.h` is generated per target. Header translation uses Aro directly on GNU libc targets and the target C preprocessor before Aro elsewhere.

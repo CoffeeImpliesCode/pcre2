@@ -4,7 +4,7 @@
   description = "PCRE2 10.49, compiled from this repository's own C sources, with a Zig facade";
 
   # Pin nixpkgs to make flake evaluation reproducible.
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/c7def046b9a883d46974757852106483d741586f";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/02c087f3fe673c9e317f206a627cb6b910336dbe";
 
   outputs = { self, nixpkgs }:
     let
@@ -23,7 +23,7 @@
 
       # Build three variants from one derivation; default keeps its target policy.
       sdk = pkgs: args:
-        pkgs.callPackage ./package.nix ({ zig = pkgs.zig_0_16; } // args);
+        pkgs.callPackage ./package.nix ({ zig = pkgs.zig_0_17; } // args);
 
       # Reuse devenv's development tool list.
       devEnv = pkgs: pkgs.callPackage ./devenv.nix { };
@@ -41,7 +41,7 @@
           name = "pcre2-sdk";
           packages = (devEnv pkgs).packages;
           shellHook = ''
-            echo "pcre2 SDK shell — Zig 0.16.0 from the pinned nixpkgs; the SDK itself is not built here."
+            echo "pcre2 SDK shell — Zig 0.17.0 from the pinned nixpkgs; the SDK itself is not built here."
             echo "Canonical: devenv shell. Try: devenv sdk.test | devenv sdk.smoke | devenv sdk.check"
           '';
         };
