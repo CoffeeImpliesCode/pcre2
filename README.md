@@ -43,10 +43,8 @@ Upstream C sources, headers, tests, fixtures and licence texts are unchanged.
 
 Add the package to a consumer's `build.zig.zon`:
 
-```zig
-.dependencies = .{
-    .pcre2 = .{ .path = "../pcre2" },
-},
+```sh
+zig fetch --save git+https://github.com/CoffeeImpliesCode/pcre2#v10.49.0
 ```
 
 Import its module in `build.zig`:
