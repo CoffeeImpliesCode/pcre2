@@ -60,28 +60,25 @@ pub const compiled_unit: type = widthed.compiled_width.unit();
 pub const Width = widthed.Width;
 
 /// Typed surface for `u8`; available only when this build compiled 8-bit PCRE2.
-pub const Width8 = if (widthed.compiled_width.unit() == u8) widthed.Width(u8) else
-    @compileError(
-        "pcre2: this build did not compile the 8-bit library, so pcre2.Width8 " ++
-            "has no entry points behind it. Use pcre2.compiled_width, or build " ++
-            "with -Dcode-unit-width=8.",
-    );
+pub const Width8 = if (widthed.compiled_width.unit() == u8) widthed.Width(u8) else @compileError(
+    "pcre2: this build did not compile the 8-bit library, so pcre2.Width8 " ++
+        "has no entry points behind it. Use pcre2.compiled_width, or build " ++
+        "with -Dcode-unit-width=8.",
+);
 
 /// Typed surface for `u16`; available only when this build compiled 16-bit PCRE2.
-pub const Width16 = if (widthed.compiled_width.unit() == u16) widthed.Width(u16) else
-    @compileError(
-        "pcre2: this build did not compile the 16-bit library, so pcre2.Width16 " ++
-            "has no entry points behind it. Use pcre2.compiled_width, or build " ++
-            "with -Dcode-unit-width=16.",
-    );
+pub const Width16 = if (widthed.compiled_width.unit() == u16) widthed.Width(u16) else @compileError(
+    "pcre2: this build did not compile the 16-bit library, so pcre2.Width16 " ++
+        "has no entry points behind it. Use pcre2.compiled_width, or build " ++
+        "with -Dcode-unit-width=16.",
+);
 
 /// Typed surface for `u32`; available only when this build compiled 32-bit PCRE2.
-pub const Width32 = if (widthed.compiled_width.unit() == u32) widthed.Width(u32) else
-    @compileError(
-        "pcre2: this build did not compile the 32-bit library, so pcre2.Width32 " ++
-            "has no entry points behind it. Use pcre2.compiled_width, or build " ++
-            "with -Dcode-unit-width=32.",
-    );
+pub const Width32 = if (widthed.compiled_width.unit() == u32) widthed.Width(u32) else @compileError(
+    "pcre2: this build did not compile the 32-bit library, so pcre2.Width32 " ++
+        "has no entry points behind it. Use pcre2.compiled_width, or build " ++
+        "with -Dcode-unit-width=32.",
+);
 
 /// Everything this facade can refuse to do.
 pub const Error = widthed.Error;

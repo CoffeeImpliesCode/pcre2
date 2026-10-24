@@ -137,7 +137,7 @@ pub fn main(init: std.process.Init) !void {
             try w.print("the demonstration subject did not match\n", .{});
             try w.flush();
             return error.ExampleSubjectDidNotMatch;
-        }
+        },
     }
     try w.print("match starts at code unit {d}\n", .{match_data.startOffset()});
 
@@ -210,7 +210,7 @@ pub fn main(init: std.process.Init) !void {
             try w.print("a subject without a port was accepted\n", .{});
             try w.flush();
             return error.ExampleUnexpectedMatch;
-        }
+        },
     }
 
     try w.print("subject without a port: no match, as expected\n", .{});

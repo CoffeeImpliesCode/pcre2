@@ -313,7 +313,7 @@ test "a subject this width's validator cannot read is a validity failure" {
     }
     const subject = units[0..wanted.len];
 
-    var regex = try mustCompile(&[_]Unit{ '.' }, .{ .utf = true });
+    var regex = try mustCompile(&[_]Unit{'.'}, .{ .utf = true });
     defer regex.deinit();
     var match_data = try pcre2.MatchData.create(&regex);
     defer match_data.deinit();
@@ -378,7 +378,8 @@ test "a block too small for the regex is refused, and its earlier captures go wi
         .matched => {},
         else => return error.FixtureMismatch,
     }
-    try std.testing.expectEqualSlices(Unit,
+    try std.testing.expectEqualSlices(
+        Unit,
         widenLiteral("abc"),
         (try match_data.group(0)) orelse return error.FixtureMismatch,
     );
@@ -405,7 +406,8 @@ test "a block too small for the regex is refused, and its earlier captures go wi
         .matched => {},
         else => return error.FixtureMismatch,
     }
-    try std.testing.expectEqualSlices(Unit,
+    try std.testing.expectEqualSlices(
+        Unit,
         widenLiteral("abc"),
         (try match_data.group(0)) orelse return error.FixtureMismatch,
     );

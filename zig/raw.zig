@@ -9,7 +9,6 @@ const c = @import("c");
 /// Typed bindings for one code-unit width.
 pub fn Raw(comptime code_unit: type) type {
     return struct {
-
         const bits: []const u8 = switch (code_unit) {
             u8 => "8",
             u16 => "16",
